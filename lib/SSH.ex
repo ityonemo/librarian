@@ -44,10 +44,11 @@ defmodule SSH do
     |> connect(options)
   end
 
+  # TODO: rename this.
   @spec normalize(nil | binary | charlist) :: [{:user, charlist}]
   defp normalize(nil) do
     case System.cmd("whoami", []) do
-      {username, 0} -> normalize(String.strip(username))
+      {username, 0} -> normalize(String.trim(username))
       _ -> []
     end
   end
@@ -66,21 +67,28 @@ defmodule SSH do
       raise SSH.ConnectionError, "error connecting to #{remote}"
   end
 
-  def run(conn, cmd, options \\ []) do
+  def run(conn, cmd!, options! \\ []) do
+    {cmd!, options!} = adjust_run(cmd!, options!)
+
     conn
-    |> stream(cmd, options)
-    |> ssh_filter(options)
+    |> stream(cmd!, options!)
+    |> ssh_filter(options!)
   end
 
   def run!(conn, cmd, options \\ []) do
     case run(conn, cmd, options) do
       {:ok, stdout, 0} -> stdout
-      {:ok, stdout, retcode} ->
+      {:ok, _stdout, retcode} ->
         raise "errored with retcode #{retcode}"
       error ->
         raise inspect(error)
     end
   end
+
+  defp adjust_run(cmd, [{:dir, dir} | options]) do
+    adjust_run("cd #{dir}; " <> cmd, options)
+  end
+  defp adjust_run(cmd, options), do: {cmd, options}
 
   @spec stream(conn, String.t, keyword) :: SSH.Stream.t
   def stream(conn, cmd, options) do
@@ -104,8 +112,12 @@ defmodule SSH do
         {acc, retval}
       _, acc -> acc
     end)
-    |> fn {iolist, retval} ->
-      {:ok, :erlang.iolist_to_binary(iolist), retval}
+    |> fn
+      {iolist, retval} ->
+        {:ok, :erlang.iolist_to_binary(iolist), retval}
+      iolist when is_list(iolist) ->
+        # for now.
+        {:error, :erlang.iolist_to_binary(iolist), :timeout}
     end.()
   end
 

@@ -4,8 +4,8 @@ defmodule SSH.Stream do
 
   alias SSH.{Conn, Chan}
 
-  @enforce_keys [:chan]
-  defstruct [:chan]
+  @enforce_keys [:conn, :chan]
+  defstruct [:conn, :chan, :stop_time, halt: false]
 
   @type t :: %__MODULE__{}
 
@@ -15,21 +15,32 @@ defmodule SSH.Stream do
   @spec new(conn, keyword) :: t
   def new(conn, options \\ []) do
     timeout = options[:timeout] || :infinity
+    stop_time = case timeout do
+      :infinity -> :infinity
+      delta_t when is_integer(delta_t) ->
+        DateTime.add(DateTime.utc_now, timeout, :millisecond)
+    end
+
     # open a channel.
     # TODO: do a better matching on this.
-    {:ok, chan} = Chan.open(conn, options) |> IO.inspect(label: "20")
-    options |> IO.inspect(label: "21")
+    {:ok, chan} =
+      :ssh_connection.session_channel(conn, timeout)
     cond do
       cmd = options[:cmd] ->
         # TODO: punt this to the Chan module.
-        :success = :ssh_connection.exec(conn, chan.chan, String.to_charlist(cmd), timeout)
+        :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
         # note that this is a "stateful modification" on the chan reference.
-        %__MODULE__{chan: chan}
+        %__MODULE__{conn: conn, chan: chan, stop_time: stop_time}
     end
   end
 
-  @spec next_stream(chan) :: {list, chan}
+  @spec next_stream(t) :: {list, t}
+  def next_stream(state = %{halt: true}) do
+    {:halt, state}
+  end
   def next_stream(state = %{conn: conn}) do
+    timeout = milliseconds_left(state.stop_time)
+
     receive do
       # a ssh "packet" should arrive as a message to this process
       # since it has been registered with the :ssh module subsystem.
@@ -39,8 +50,18 @@ defmodule SSH.Stream do
       # the packet and issue a warning.
       {:ssh_cm, wrong_conn, packet} ->
         wrong_source(state, packet, "unexpected_connection: #{inspect wrong_conn}")
+
       # if we run out of time, we should emit a warning and halt the stream.
+      after timeout ->
+        # TODO: cleanup this by emitting a close signal.
+        {[{:error, :timeout}], %{state | halt: true}}
     end
+  end
+
+  def milliseconds_left(:infinity), do: :infinity
+  def milliseconds_left(stop_time) do
+    time = DateTime.diff(stop_time, DateTime.utc_now, :millisecond)
+    if time > 0, do: time, else: 0
   end
 
   def last_stream(chan) do
@@ -82,7 +103,7 @@ defmodule SSH.Stream do
     # using a state machine once the tests have been written.
     def reduce(stream, acc, fun) do
       Stream.resource(
-        fn -> stream.chan end,
+        fn -> stream end,
         &SSH.Stream.next_stream/1,
         &SSH.Stream.last_stream/1
       ).(acc, fun)
