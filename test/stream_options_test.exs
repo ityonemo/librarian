@@ -1,5 +1,5 @@
 defmodule SSHTest.StreamOptionsTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   import ExUnit.CaptureIO
 
   describe "when executing SSH.stream/3" do

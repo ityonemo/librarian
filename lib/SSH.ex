@@ -8,7 +8,6 @@ defmodule SSH do
 
   @doc """
 
-
   options:
 
   - `login:` username to log in.
@@ -88,9 +87,9 @@ defmodule SSH do
     end
   end
 
-  defp consume(str, {status, list, nil}) when is_binary(str), do: {status, [list | str], nil}
-  defp consume(token = {a, b}, {status, list, nil}) when is_atom(a) and is_binary(b) do
-    {status, [token | list], nil}
+  defp consume(str, {status, list, retval}) when is_binary(str), do: {status, [list | str], retval}
+  defp consume(token = {a, b}, {status, list, retval}) when is_atom(a) and is_binary(b) do
+    {status, [token | list], retval}
   end
   defp consume(:eof, {_any, list, retval}), do: {:ok, list, retval}
   defp consume({:error, reason}, {_status, list, _any}), do: {:error, list, reason}
@@ -135,16 +134,8 @@ defmodule SSH do
 
 
   @spec stream(conn, String.t, keyword) :: SSH.Stream.t
-  def stream(conn, cmd, options) do
-    stream(conn, [{:cmd, cmd} | options])
-  end
-
-  @spec stream(conn, String.t | keyword) :: SSH.Stream.t
-  def stream(conn, options) when is_list(options) do
-    SSH.Stream.new(conn, options)
-  end
-  def stream(conn, cmd) when is_binary(cmd) do
-    SSH.Stream.new(conn, cmd: cmd)
+  def stream(conn, cmd, options \\ []) do
+    SSH.Stream.new(conn, [{:cmd, cmd} | options])
   end
 
 end

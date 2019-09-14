@@ -1,5 +1,5 @@
 defmodule SSHTest.RunOptionsTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   import ExUnit.CaptureIO
 
   describe "when executing SSH.run!/3" do

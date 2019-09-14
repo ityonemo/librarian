@@ -139,7 +139,6 @@ defmodule SSH.Stream do
   @spec silent(any) :: []
   defp silent(_), do: []
 
-
   defimpl Enumerable do
     def reduce(stream, acc, fun) do
       Stream.resource(
@@ -154,5 +153,22 @@ defmodule SSH.Stream do
     def member?(_stream, _term), do: {:error, __MODULE__}
 
     def slice(_stream), do: {:error, __MODULE__}
+  end
+
+  defimpl Collectable do
+    def into(stream) do
+      collector_fun = fn
+        str, {:cont, content} ->
+          # TODO: error handling here
+          :ssh_connection.send(str.conn, str.chan, content)
+          str
+        str, :done ->
+          :ssh_connection.send_eof(str.conn, str.chan)
+          str
+        _set, :halt -> :ok
+      end
+
+      {stream, collector_fun}
+    end
   end
 end
