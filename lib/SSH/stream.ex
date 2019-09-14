@@ -1,36 +1,47 @@
 defmodule SSH.Stream do
 
+  # TODO: rename "new" to "build"
+
   import Logger
 
-  alias SSH.{Conn, Chan}
-
-  @enforce_keys [:conn, :chan]
-  defstruct [:conn, :chan, :stop_time, halt: false]
-
-  @type t :: %__MODULE__{}
+  @enforce_keys [:conn, :chan, :stop_time, :process]
+  defstruct [:conn, :chan, :stop_time, :process, control: false, halt: false]
 
   @type conn :: SSH.conn
-  @type chan :: Chan.t
+  @type chan :: :ssh_connection.channel
+
+  @type t :: %__MODULE__{
+    conn: conn,
+    chan: chan,
+    stop_time: DateTime.t,
+    # TODO: spec this VV out better
+    process: (non_neg_integer, String.t -> any),
+    control: boolean,
+    halt: boolean
+  }
 
   @spec new(conn, keyword) :: t
   def new(conn, options \\ []) do
-    timeout = options[:timeout] || :infinity
+    timeout = Keyword.get(options, :timeout, :infinity)
+    control = Keyword.get(options, :control, false)
     stop_time = case timeout do
       :infinity -> :infinity
       delta_t when is_integer(delta_t) ->
         DateTime.add(DateTime.utc_now, timeout, :millisecond)
     end
 
+    process = processor_for(options)
+
     # open a channel.
     # TODO: do a better matching on this.
-    {:ok, chan} =
-      :ssh_connection.session_channel(conn, timeout)
+    {:ok, chan} = :ssh_connection.session_channel(conn, timeout)
     cond do
       cmd = options[:cmd] ->
         # TODO: punt this to the Chan module.
         :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
         # note that this is a "stateful modification" on the chan reference.
-        %__MODULE__{conn: conn, chan: chan, stop_time: stop_time}
+        %__MODULE__{conn: conn, chan: chan, stop_time: stop_time,
+          process: process, control: control}
     end
   end
 
@@ -69,38 +80,67 @@ defmodule SSH.Stream do
     chan
   end
 
-  defp process_packet(state = %{chan: chan}, {:data, chan, dtype, data}) do
-    :ssh_connection.adjust_window(state.conn, chan, byte_size(data))
-    case dtype do
-      0 ->
-        {[{:stdout, data}], state}
-      1 ->
-        {[{:stderr, data}], state}
-    end
+  #TODO: change all "state" to "stream"
+
+  defp process_packet(stream = %{chan: chan}, {:data, chan, dtype, data}) do
+    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
+    {stream.process.(dtype, data), stream}
   end
-  defp process_packet(state = %{chan: chan}, {:eof, chan}) do
-    {[:eof], state}
+  defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
+    {control(stream, :eof), stream}
   end
-  defp process_packet(state = %{chan: chan}, {:exit_status, chan, status}) do
-    {[{:retval, status}], state}
+  defp process_packet(stream = %{chan: chan}, {:exit_status, chan, status}) do
+    {control(stream, {:retval, status}), stream}
   end
-  defp process_packet(state = %{chan: chan}, {:closed, chan}) do
-    {:halt, state}
+  defp process_packet(stream = %{chan: chan}, {:closed, chan}) do
+    {:halt, stream}
   end
-  defp process_packet(state, packet) do
-    wrong_source(state, packet, "unexpected_channel: #{elem packet, 2}")
+  defp process_packet(stream, packet) do
+    wrong_source(stream, packet, "unexpected_channel: #{elem packet, 2}")
   end
+
+  defp control(%{control: true}, v), do: [v]
+  defp control(_, _v), do: []
 
   #TODO: tag log messages with SSH metadata.
-  defp wrong_source(state, packet, msg) do
+  defp wrong_source(stream, packet, msg) do
     Logger.warn("ssh packet of type #{elem packet, 1} received from #{msg}")
-    {[], state}
+    {[], stream}
   end
 
-  defimpl Enumerable do
+  defp processor_for(options) do
+    stdout_processor = get_processor(options[:stdout], :stdout)
+    stderr_processor = get_processor(options[:stderr], :stderr)
+    fn
+      0, content -> stdout_processor.(content)
+      1, content -> stderr_processor.(content)
+    end
+  end
 
-    # TODO: consider writing a more idiomatic version of this
-    # using a state machine once the tests have been written.
+  defp get_processor(func, _) when is_function(func, 1) do
+    fn {_, content} -> func.(content) end
+  end
+  defp get_processor(:stream, _), do: &[&1]
+  defp get_processor(:stdout, _), do: &silent(IO.write(&1))
+  defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1))
+  defp get_processor(:raw, device), do: &[{device, &1}]
+  defp get_processor({:file, path}, _) do
+    # TODO: we should probably clean up this file descriptor later.
+    {:ok, fd} = File.open(path, [:append])
+    &to_file(&1, fd)
+  end
+  # stdout defaults to send to the stream and stderr defaults to print to stderr
+  defp get_processor(_, :stdout), do: get_processor(:stream, :stdout)
+  defp get_processor(_, :stderr), do: get_processor(:stderr, :stderr)
+
+  @spec to_file(String.t, atom | pid) :: []
+  defp to_file(content, fd), do: silent(IO.write(fd, content))
+
+  @spec silent(any) :: []
+  defp silent(_), do: []
+
+
+  defimpl Enumerable do
     def reduce(stream, acc, fun) do
       Stream.resource(
         fn -> stream end,

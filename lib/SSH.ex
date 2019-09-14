@@ -68,11 +68,14 @@ defmodule SSH do
   end
 
   def run(conn, cmd!, options! \\ []) do
+    options! = Keyword.put(options!, :control, true)
     {cmd!, options!} = adjust_run(cmd!, options!)
 
     conn
     |> stream(cmd!, options!)
-    |> ssh_filter(options!)
+    |> Enum.to_list
+    |> Enum.reduce({:error, [], nil}, &consume/2)
+    |> normalize_output(options!)
   end
 
   def run!(conn, cmd, options \\ []) do
@@ -85,10 +88,51 @@ defmodule SSH do
     end
   end
 
-  defp adjust_run(cmd, [{:dir, dir} | options]) do
-    adjust_run("cd #{dir}; " <> cmd, options)
+  defp consume(str, {status, list, nil}) when is_binary(str), do: {status, [list | str], nil}
+  defp consume(token = {a, b}, {status, list, nil}) when is_atom(a) and is_binary(b) do
+    {status, [token | list], nil}
   end
-  defp adjust_run(cmd, options), do: {cmd, options}
+  defp consume(:eof, {_any, list, retval}), do: {:ok, list, retval}
+  defp consume({:error, reason}, {_status, list, _any}), do: {:error, list, reason}
+  defp consume({:retval, retval}, {status, list, _any}), do: {status, list, retval}
+
+  defp normalize_output({a, list, b}, options) do
+    case options[:as] do
+      nil -> {a, :erlang.iolist_to_binary(list), b}
+      :binary -> {a, :erlang.iolist_to_binary(list), b}
+      :iolist -> {a, list, b}
+      :tuple ->
+        tuple_map = list
+        |> Enum.reverse
+        |> Enum.group_by(fn {key, _} -> key end, fn {_, value} -> value end)
+
+        result = {
+          :erlang.iolist_to_binary(tuple_map.stdout),
+          :erlang.iolist_to_binary(tuple_map.stderr)
+        }
+
+        {a, result, b}
+    end
+  end
+
+  defp adjust_run(cmd, options) do
+    dir = options[:dir]
+    if dir do
+      {"cd #{dir}; " <> cmd, refactor(options)}
+    else
+      {cmd, refactor(options)}
+    end
+  end
+  defp refactor(options) do
+    if options[:io_tuple] do
+      options
+      |> Keyword.drop([:stdout, :stderr, :io_tuple, :as])
+      |> Keyword.merge(stdout: :raw, stderr: :raw, as: :tuple)
+    else
+      options
+    end
+  end
+
 
   @spec stream(conn, String.t, keyword) :: SSH.Stream.t
   def stream(conn, cmd, options) do
@@ -101,24 +145,6 @@ defmodule SSH do
   end
   def stream(conn, cmd) when is_binary(cmd) do
     SSH.Stream.new(conn, cmd: cmd)
-  end
-
-  defp ssh_filter(ssh_stream, _options) do
-    ssh_stream
-    |> Enum.reduce([], fn
-      {:stdout, txt}, acc ->
-        [acc | txt]
-      {:retval, retval}, acc ->
-        {acc, retval}
-      _, acc -> acc
-    end)
-    |> fn
-      {iolist, retval} ->
-        {:ok, :erlang.iolist_to_binary(iolist), retval}
-      iolist when is_list(iolist) ->
-        # for now.
-        {:error, :erlang.iolist_to_binary(iolist), :timeout}
-    end.()
   end
 
 end
