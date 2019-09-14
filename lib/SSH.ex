@@ -15,9 +15,9 @@ defmodule SSH do
 
   and other SSH options.  Some conversions between ssh options and SSH.connect options:
 
-  | `ssh` option              | `SSH` option                |
-  | ------------------------- | --------------------------- |
-  | `-o NoStrictremoteChecking` | silently_accept_remotes: true |
+  | ssh commandline option    | SSH library option            |
+  | ------------------------- | ----------------------------- |
+  | `-o NoStrictHostChecking` | `silently_accept_hosts: true` |
   """
   @spec connect(remote, keyword) :: {:ok, conn} | {:error, any}
   def connect(remote, options \\ [])
@@ -63,7 +63,7 @@ defmodule SSH do
     conn
   rescue
     _ in MatchError ->
-      raise SSH.ConnectionError, "error connecting to #{remote}"
+      reraise SSH.ConnectionError, "error connecting to #{remote}"
   end
 
   def run(conn, cmd!, options! \\ []) do
@@ -131,7 +131,6 @@ defmodule SSH do
       options
     end
   end
-
 
   @spec stream(conn, String.t, keyword) :: SSH.Stream.t
   def stream(conn, cmd, options \\ []) do

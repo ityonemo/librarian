@@ -39,10 +39,27 @@ defmodule SSHTest.RunOptionsTest do
       assert "foo\nbar\n" == File.read!(@tmp_file)
     end
 
-    test "we can get standard io as a tuple" do
+    test "we can tee sneakily using a stdout function" do
+      test_pid = self()
+      capture_io(fn ->
+        test_run = "localhost"
+        |> SSH.connect!
+        |> SSH.run!("echo foo", stdout: fn content ->
+          IO.write(content)
+          [content]
+        end)
+        send(test_pid, {:result, test_run})
+      end)
+
+      assert_receive {:result, "foo\n"}
+    end
+
+    test "we can get standard io (both out and err) as a tuple" do
       test_run = "localhost"
       |> SSH.connect!
       |> SSH.run!("echo foo 1>&2; echo bar", io_tuple: true)
+
+      assert {"bar\n", "foo\n"} == test_run
     end
 
     test "we can get standard out as an iolist" do

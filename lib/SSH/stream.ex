@@ -5,7 +5,7 @@ defmodule SSH.Stream do
   import Logger
 
   @enforce_keys [:conn, :chan, :stop_time, :process]
-  defstruct [:conn, :chan, :stop_time, :process, control: false, halt: false]
+  defstruct [:conn, :chan, :stop_time, :process, :fds, control: false, halt: false]
 
   @type conn :: SSH.conn
   @type chan :: :ssh_connection.channel
@@ -17,7 +17,8 @@ defmodule SSH.Stream do
     # TODO: spec this VV out better
     process: (non_neg_integer, String.t -> any),
     control: boolean,
-    halt: boolean
+    halt: boolean,
+    fds: []
   }
 
   @spec new(conn, keyword) :: t
@@ -30,7 +31,11 @@ defmodule SSH.Stream do
         DateTime.add(DateTime.utc_now, timeout, :millisecond)
     end
 
-    process = processor_for(options)
+    # convert any 'file write' requests to a file descriptor
+    fds = fds_for(options)
+    # determine the functions which will handle the conversion
+    # of inbound ssh data packets to usable forms.
+    process = processor_for(Keyword.merge(options, fds))
 
     # open a channel.
     # TODO: do a better matching on this.
@@ -41,7 +46,7 @@ defmodule SSH.Stream do
         :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
         # note that this is a "stateful modification" on the chan reference.
         %__MODULE__{conn: conn, chan: chan, stop_time: stop_time,
-          process: process, control: control}
+          process: process, control: control, fds: fds}
     end
   end
 
@@ -108,6 +113,9 @@ defmodule SSH.Stream do
     {[], stream}
   end
 
+  ###################################################################
+  ## stream data processing
+
   defp processor_for(options) do
     stdout_processor = get_processor(options[:stdout], :stdout)
     stderr_processor = get_processor(options[:stderr], :stderr)
@@ -117,29 +125,43 @@ defmodule SSH.Stream do
     end
   end
 
-  defp get_processor(func, _) when is_function(func, 1) do
-    fn {_, content} -> func.(content) end
-  end
+  defp get_processor(func, _) when is_function(func, 1), do: func
   defp get_processor(:stream, _), do: &[&1]
   defp get_processor(:stdout, _), do: &silent(IO.write(&1))
   defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1))
   defp get_processor(:raw, device), do: &[{device, &1}]
-  defp get_processor({:file, path}, _) do
-    # TODO: we should probably clean up this file descriptor later.
-    {:ok, fd} = File.open(path, [:append])
-    &to_file(&1, fd)
-  end
+  defp get_processor({:file, fd}, _), do: &silent(IO.write(fd, &1))
   # stdout defaults to send to the stream and stderr defaults to print to stderr
   defp get_processor(_, :stdout), do: get_processor(:stream, :stdout)
   defp get_processor(_, :stderr), do: get_processor(:stderr, :stderr)
 
-  @spec to_file(String.t, atom | pid) :: []
-  defp to_file(content, fd), do: silent(IO.write(fd, content))
-
   @spec silent(any) :: []
   defp silent(_), do: []
 
+  ###################################################################
+  ## file descriptor things
+
+  defp fds_for(options) do
+    Enum.flat_map(options, fn
+      {mode, {:file, path}} ->
+        {:ok, fd} = File.open(path, [:append])
+        [{mode, {:file, fd}}]
+      _ -> []
+    end)
+  end
+
+  defp cleanup_fds(stream) do
+    Enum.each(stream.fds, fn {_, fd} -> File.close(fd) end)
+  end
+
+  ###################################################################
+  ## protocol implementations
+
   defimpl Enumerable do
+    @type stream :: SSH.Stream.t
+    @type event :: {:cont, stream} | {:halt, stream} | {:suspend, stream}
+
+    @spec reduce(stream, event, function) :: Enumerable.result
     def reduce(stream, acc, fun) do
       Stream.resource(
         fn -> stream end,
@@ -148,10 +170,13 @@ defmodule SSH.Stream do
       ).(acc, fun)
     end
 
+    @spec count(stream) :: {:error, module}
     def count(_stream), do: {:error, __MODULE__}
 
+    @spec member?(stream, term) :: {:error, module}
     def member?(_stream, _term), do: {:error, __MODULE__}
 
+    @spec slice(stream) :: {:error, module}
     def slice(_stream), do: {:error, __MODULE__}
   end
 
