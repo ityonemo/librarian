@@ -20,7 +20,7 @@ defmodule Librarian.MixProject do
         "coveralls.detail": :test,
         "coveralls.post": :test,
         "coveralls.html": :test],
-      docs: [main: "Librarian", extras: ["README.md"]]
+      docs: [main: "SSH", extras: ["README.md"]]
     ]
   end
 

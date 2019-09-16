@@ -4,6 +4,8 @@ defmodule SSH do
 
   @behaviour SSH.Api
 
+  require Logger
+
   @type ip4 :: :inet.ip4_address
   @type remote :: String.t | charlist | ip4
   @type conn :: :ssh.connection_ref
@@ -141,6 +143,123 @@ defmodule SSH do
     else
       options
     end
+  end
+
+  #############################################################################
+  ## SCP MODE: sending
+
+  @doc """
+  sends binary content to the remote host.
+
+  Under the hood, this uses the scp protocol to transfer files.
+
+  Protocol is as follows:
+  - execute `scp` remotely in the undocumented `-t <destination>` mode
+  - send a control string `"C0<perms> <size> <filename>"`
+  - wait for single zero byte
+  - send the binary data + terminating zero
+  - wait for single zero byte
+  - send `EOF`
+
+  The perms term should be in octal, and the filename should be rootless.
+
+  options:
+  - `:permissions` - sets unix-style permissions on the file.  Defaults to `0o644`
+
+  Example:
+  ```
+  SSH.send(conn, "foo", "path/to/desired/file")
+  ```
+  """
+  def send(conn, content, remote_file, options \\ []) do
+    perms = Keyword.get(options, :permissions, 0o644)
+    size = :erlang.size(content)
+    filename = Path.basename(remote_file)
+    SSH.Stream.new(conn,
+      cmd: "scp -t #{remote_file}",
+      stdout: &process_scp_send(&1, &2),
+      init: &init_scp_send(&1,
+        "C0#{Integer.to_string(perms, 8)} #{size} #{filename}\n",
+        content))
+    |> Stream.run
+    # TODO: replace this with "ssh stream reducer"
+  end
+
+  def send!(conn, content, remote_file, options \\ []) do
+    send(conn, content, remote_file, options)
+  end
+
+  defp init_scp_send(stream, init, content) do
+    send(self(), {:ssh_send, init})
+    {func, _} = stream.stdout
+    %{stream | stdout: {func, content}}
+  end
+
+  defp process_scp_send(<<0>>, content) when is_binary(content) do
+    send(self(), {:ssh_send, content})
+    {[], :end}
+  end
+  defp process_scp_send(<<0>>, :end) do
+    # in the case of the scp_send we need to send out the EOF message ourselves.
+    send(self(), :ssh_eof)
+    {[], :end}
+  end
+  defp process_scp_send(<<1, error :: binary>>, _) do
+    send(self(), :ssh_eof)
+    Logger.error(error)
+    {[], :end}
+  end
+
+  #############################################################################
+  ## SCP MODE: fetching
+
+  @doc """
+  retrieves a binary file from the remote host.
+
+  Under the hood, this uses the scp protocol to transfer files.
+
+  Protocol is as follows:
+  - execute `scp` remotely in the undocumented `-f <source>` mode
+  - send a single zero byte to initiate the conversation
+  - wait for a control string `"C0<perms> <size> <filename>"`
+  - send a single zero byte
+  - wait for the binary data + terminating zero
+  - send a single zero byte
+
+  The perms term should be in octal, and the filename should be rootless.
+
+  options:
+  - `:permissions` - sets unix-style permissions on the file.  Defaults to `0o644`
+
+  Example:
+  ```
+  SSH.fetch(conn, "path/to/desired/file")
+  ```
+  """
+
+  # TODO: make this distinct from fetch!
+  def fetch(conn, remote_file, _options \\ []) do
+    conn
+    |> SSH.Stream.new(cmd: "scp -f #{remote_file}",
+                      stdout: &process_scp_fetch/1,
+                      init: &init_scp_fetch/1)
+    |> Enum.reduce(%SSH.SCPState{}, &SSH.SCPState.stream_reducer/2)
+    |> Map.get(:content)
+    |> :erlang.iolist_to_binary
+  end
+
+  def fetch!(conn, remote_file, options \\ []) do
+    fetch(conn, remote_file, options)
+  end
+
+  defp init_scp_fetch(stream) do
+    send(self(), {:ssh_send, <<0>>})
+    stream
+  end
+
+  defp process_scp_fetch(content) do
+    send(self(), {:ssh_send, <<0>>})
+    [content]
   end
 
   @spec stream(conn, String.t, keyword) :: SSH.Stream.t
