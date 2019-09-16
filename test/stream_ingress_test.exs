@@ -2,7 +2,7 @@ defmodule SSHTest.StreamIngressTest do
   use ExUnit.Case, async: true
 
   @footxt "/tmp/foo.txt"
-  test "streaming stdin over the connection is possible" do
+  test "streaming to stdin over the connection is possible" do
 
     File.rm_rf!(@footxt)
 

@@ -4,21 +4,25 @@ defmodule SSH.Stream do
 
   import Logger
 
-  @enforce_keys [:conn, :chan, :stop_time, :process]
-  defstruct [:conn, :chan, :stop_time, :process, :fds, control: false, halt: false]
+  @enforce_keys [:conn, :chan, :stop_time, :stdout, :stderr]
+  defstruct [:conn, :chan, :stop_time, :stdout, :stderr, :fds,
+    control: false,
+    halt: false]
 
   @type conn :: SSH.conn
   @type chan :: :ssh_connection.channel
+  # TODO: spec out any is the same way as below:
+  @type process_fn :: (String.t -> any) | {(String.t, term -> {any, term}), term}
 
   @type t :: %__MODULE__{
     conn: conn,
     chan: chan,
     stop_time: DateTime.t,
-    # TODO: spec this VV out better
-    process: (non_neg_integer, String.t -> any),
+    fds: [],
     control: boolean,
     halt: boolean,
-    fds: []
+    stdout: process_fn,
+    stderr: process_fn
   }
 
   @spec new(conn, keyword) :: t
@@ -35,7 +39,10 @@ defmodule SSH.Stream do
     fds = fds_for(options)
     # determine the functions which will handle the conversion
     # of inbound ssh data packets to usable forms.
-    process = processor_for(Keyword.merge(options, fds))
+    {stdout, stderr} = processor_for(Keyword.merge(options, fds))
+
+    # set up an initializer function that might modify the stream.
+    initializer = Keyword.get(options, :init, &(&1))
 
     # open a channel.
     # TODO: do a better matching on this.
@@ -45,8 +52,9 @@ defmodule SSH.Stream do
         # TODO: punt this to the Chan module.
         :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
         # note that this is a "stateful modification" on the chan reference.
-        %__MODULE__{conn: conn, chan: chan, stop_time: stop_time,
-          process: process, control: control, fds: fds}
+        initializer.(
+          %__MODULE__{conn: conn, chan: chan, stop_time: stop_time,
+          stdout: stdout, stderr: stderr, control: control, fds: fds})
     end
   end
 
@@ -58,14 +66,24 @@ defmodule SSH.Stream do
     timeout = milliseconds_left(state.stop_time)
 
     receive do
-      # a ssh "packet" should arrive as a message to this process
-      # since it has been registered with the :ssh module subsystem.
+      # a ssh "packet" should arrive as a message to this process since it has
+      # been registered with the :ssh module subsystem.
       {:ssh_cm, ^conn, packet} ->
         process_packet(state, packet)
-      # if the chan and conn values don't match, then we should drop
-      # the packet and issue a warning.
+
+      # if the chan and conn values don't match, then we should drop the packet
+      # and issue a warning.
       {:ssh_cm, wrong_conn, packet} ->
-        wrong_source(state, packet, "unexpected_connection: #{inspect wrong_conn}")
+        wrong_source(state, packet, "unexpected connection: #{inspect wrong_conn}")
+
+      # also allow messages to be SENT along the ssh channel, asynchronously,
+      # using erlang messages as a "side channel"
+      {:ssh_send, payload} ->
+        send_packet(state, payload)
+
+      :ssh_eof ->
+        :ssh_connection.send_eof(state.conn, state.chan)
+        {:halt, %{state | halt: true}}
 
       # if we run out of time, we should emit a warning and halt the stream.
       after timeout ->
@@ -86,10 +104,25 @@ defmodule SSH.Stream do
   end
 
   #TODO: change all "state" to "stream"
-
-  defp process_packet(stream = %{chan: chan}, {:data, chan, dtype, data}) do
+  defp process_packet(stream = %{chan: chan, stdout: {fun, state}},
+                      {:data, chan, 0, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    {stream.process.(dtype, data), stream}
+    {output, new_state} = fun.(data, state)
+    {output, %{stream | stdout: {fun, new_state}}}
+  end
+  defp process_packet(stream = %{chan: chan, stderr: {fun, state}},
+                      {:data, chan, 1, data}) do
+    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
+    {output, new_state} = fun.(data, state)
+    {output, %{stream | stderr: {fun, new_state}}}
+  end
+  defp process_packet(stream = %{chan: chan}, {:data, chan, 0, data}) do
+    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
+    {stream.stdout.(data), stream}
+  end
+  defp process_packet(stream = %{chan: chan}, {:data, chan, 1, data}) do
+    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
+    {stream.stderr.(data), stream}
   end
   defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
     {control(stream, :eof), stream}
@@ -101,7 +134,7 @@ defmodule SSH.Stream do
     {:halt, stream}
   end
   defp process_packet(stream, packet) do
-    wrong_source(stream, packet, "unexpected_channel: #{elem packet, 2}")
+    wrong_source(stream, packet, "unexpected channel: #{elem packet, 2}")
   end
 
   defp control(%{control: true}, v), do: [v]
@@ -116,16 +149,13 @@ defmodule SSH.Stream do
   ###################################################################
   ## stream data processing
 
-  defp processor_for(options) do
-    stdout_processor = get_processor(options[:stdout], :stdout)
-    stderr_processor = get_processor(options[:stderr], :stderr)
-    fn
-      0, content -> stdout_processor.(content)
-      1, content -> stderr_processor.(content)
-    end
-  end
+  defp processor_for(options), do: {
+    get_processor(options[:stdout], :stdout),
+    get_processor(options[:stderr], :stderr)
+  }
 
-  defp get_processor(func, _) when is_function(func, 1), do: func
+  defp get_processor(fun, _) when is_function(fun, 1), do: fun
+  defp get_processor(fun, _) when is_function(fun, 2), do: {fun, nil}
   defp get_processor(:stream, _), do: &[&1]
   defp get_processor(:stdout, _), do: &silent(IO.write(&1))
   defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1))
@@ -152,6 +182,15 @@ defmodule SSH.Stream do
 
   defp cleanup_fds(stream) do
     Enum.each(stream.fds, fn {_, fd} -> File.close(fd) end)
+  end
+
+  ###################################################################
+  ## interactive streaming capabilities
+
+  # TODO: replace "state" everywhere with "stream"
+  def send_packet(stream, payload) do
+    :ssh_connection.send(stream.conn, stream.chan, payload)
+    {[], stream}
   end
 
   ###################################################################

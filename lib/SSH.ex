@@ -2,6 +2,8 @@ defmodule SSH do
   @moduledoc """
   """
 
+  require Logger
+
   @type ip4 :: :inet.ip4_address
   @type remote :: String.t | charlist | ip4
   @type conn :: :ssh.connection_ref
@@ -130,6 +132,68 @@ defmodule SSH do
     else
       options
     end
+  end
+
+  def send(conn, content, remote_file, options \\ []) do
+    perms = 0o644
+    size = :erlang.size(content)
+    filename = Path.basename(remote_file)
+    stream = SSH.Stream.new(conn,
+      cmd: "scp -t #{remote_file}",
+      stdout: &outbound_scp(&1, &2),
+      init: &init_scp_send(&1,
+        "C0#{Integer.to_string(perms, 8)} #{size} #{filename}\n",
+        content))
+    |> Enum.to_list
+  end
+
+  def send!(conn, content, remote_file, options \\ []) do
+    send(conn, content, remote_file, options)
+  end
+
+  # TODO: make this distinct from fetch!
+  def fetch(conn, remote_file, _options \\ []) do
+    stream = SSH.Stream.new(conn,
+      cmd: "scp -f #{remote_file}",
+      stdout: &process_scp/1,
+      init: &init_scp_fetch/1)
+
+    final_state = Enum.reduce(stream, %SSH.SCPState{}, &SSH.SCPState.stream_reducer/2)
+    :erlang.iolist_to_binary(final_state.content)
+  end
+
+  def fetch!(conn, remote_file, options \\ []) do
+    fetch(conn, remote_file, options)
+  end
+
+  defp process_scp(content) do
+    send(self(), {:ssh_send, <<0>>})
+    [content]
+  end
+
+  defp init_scp_fetch(stream) do
+    send(self(), {:ssh_send, <<0>>})
+    stream
+  end
+
+  defp init_scp_send(stream, init, content) do
+    send(self(), {:ssh_send, init})
+    {func, _} = stream.stdout
+    %{stream | stdout: {func, content}}
+  end
+
+  defp outbound_scp(<<0>>, content) when is_binary(content) do
+    send(self(), {:ssh_send, content})
+    {[], :end}
+  end
+  defp outbound_scp(<<0>>, :end) do
+    send(self(), :ssh_eof)
+    {[], :end}
+  end
+  defp outbound_scp(<<1, error :: binary>>, _) do
+    send(self(), :ssh_eof)
+    Logger.error(error)
+    {[], :end}
   end
 
   @spec stream(conn, String.t, keyword) :: SSH.Stream.t
