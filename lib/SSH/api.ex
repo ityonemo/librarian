@@ -8,9 +8,16 @@ defmodule SSH.Api do
   forms is provided.
   """
 
+  @callback connect(SSH.remote, keyword) :: SSH.connect_result
   @callback connect(SSH.remote) :: SSH.connect_result
+
   @callback run(SSH.conn, String.t, keyword) :: SSH.run_result
+  @callback run(SSH.conn, String.t) :: SSH.run_result
+
   @callback fetch(SSH.conn, Path.t, keyword) :: SSH.fetch_result
+  @callback fetch(SSH.conn, Path.t) :: SSH.fetch_result
+
   @callback send(SSH.conn, iodata, Path.t, keyword) :: SSH.send_result
+  @callback send(SSH.conn, iodata, Path.t) :: SSH.send_result
 
 end
