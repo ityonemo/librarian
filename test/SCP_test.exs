@@ -8,7 +8,7 @@ defmodule SSHTest.SCPTest do
     File.write!(@tmp_ssh_fetch, @content)
 
     conn = SSH.connect!("localhost")
-    assert @content == SSH.fetch!(conn, "test")
+    assert @content == SSH.fetch!(conn, @tmp_ssh_fetch)
   end
 
   @tmp_ssh_send "/tmp/ssh_send.txt"

@@ -74,8 +74,10 @@ defmodule SSH do
 
   @type retval :: 0..255
   @type run_content :: iodata | {String.t, String.t}
+  @doc """
+  some documentation about the "run" command
+  """
   @type run_result :: {:ok, run_content, retval} | {:error, term}
-
   @impl true
   @spec run(conn, String.t, keyword) :: run_result
   def run(conn, cmd!, options! \\ []) do
@@ -171,6 +173,9 @@ defmodule SSH do
   SSH.send(conn, "foo", "path/to/desired/file")
   ```
   """
+  @type send_result :: :ok | {:error, term}
+  @impl true
+  @spec send(conn, iodata, Path.t, keyword) :: send_result
   def send(conn, content, remote_file, options \\ []) do
     perms = Keyword.get(options, :permissions, 0o644)
     size = :erlang.size(content)
@@ -183,10 +188,15 @@ defmodule SSH do
         content))
     |> Stream.run
     # TODO: replace this with "ssh stream reducer"
+    :ok
   end
 
+  @spec send!(conn, iodata, Path.t, keyword) :: :ok | no_return
   def send!(conn, content, remote_file, options \\ []) do
-    send(conn, content, remote_file, options)
+    case send(conn, content, remote_file, options) do
+      :ok -> :ok
+      _ -> throw "error"
+    end
   end
 
   defp init_scp_send(stream, init, content) do
@@ -204,9 +214,21 @@ defmodule SSH do
     send(self(), :ssh_eof)
     {[], :end}
   end
+  defp process_scp_send(<<0>> <> rest, any) do
+    # sometimes the remote side will get overeager and send "other information
+    # our way.  Go ahead and ignore these single-byte zeros.
+    process_scp_send(rest, any)
+  end
   defp process_scp_send(<<1, error :: binary>>, _) do
     send(self(), :ssh_eof)
     Logger.error(error)
+    {[], :end}
+  end
+  defp process_scp_send(<<2, error :: binary>>, _) do
+    # apparently OpenSSH "never sends" fatal error packets.  Just in case the
+    # specs change, we should handle this condition
+    send(self(), :ssh_eof)
+    Logger.error("fatal error: #{error}")
     {[], :end}
   end
 
@@ -237,19 +259,27 @@ defmodule SSH do
   ```
   """
 
-  # TODO: make this distinct from fetch!
+  @type fetch_result :: {:ok, binary} | {:error, term}
+  @impl true
+  @spec fetch(conn, Path.t, keyword) :: fetch_result
   def fetch(conn, remote_file, _options \\ []) do
-    conn
+    binary_result = conn
     |> SSH.Stream.new(cmd: "scp -f #{remote_file}",
                       stdout: &process_scp_fetch/1,
                       init: &init_scp_fetch/1)
     |> Enum.reduce(%SSH.SCPState{}, &SSH.SCPState.stream_reducer/2)
     |> Map.get(:content)
     |> :erlang.iolist_to_binary
+
+    {:ok, binary_result}
   end
 
   def fetch!(conn, remote_file, options \\ []) do
-    fetch(conn, remote_file, options)
+    case fetch(conn, remote_file, options) do
+      {:ok, result} -> result
+      # TODO: better raise result below.
+      _ -> throw "oops"
+    end
   end
 
   defp init_scp_fetch(stream) do
