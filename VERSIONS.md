@@ -7,6 +7,7 @@
 - first implementation
 - ssh commands
 - scp features
+- ssh library api
 
 ## 0.2
 

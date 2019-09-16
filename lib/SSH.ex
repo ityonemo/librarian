@@ -2,6 +2,8 @@ defmodule SSH do
   @moduledoc """
   """
 
+  @behaviour SSH.Api
+
   @type ip4 :: :inet.ip4_address
   @type remote :: String.t | charlist | ip4
   @type conn :: :ssh.connection_ref
@@ -19,7 +21,9 @@ defmodule SSH do
   | ------------------------- | ----------------------------- |
   | `-o NoStrictHostChecking` | `silently_accept_hosts: true` |
   """
-  @spec connect(remote, keyword) :: {:ok, conn} | {:error, any}
+  @type connect_result :: {:ok, SSH.conn} | {:error, any}
+  @impl true
+  @spec connect(remote, keyword) :: connect_result
   def connect(remote, options \\ [])
   def connect(remote, options) when is_list(remote) do
 
@@ -43,7 +47,7 @@ defmodule SSH do
     |> connect(options)
   end
 
-  # TODO: rename this.
+  # TODO: consider moving this out to a different module.
   @spec normalize(nil | binary | charlist) :: [{:user, charlist}]
   defp normalize(nil) do
     case System.cmd("whoami", []) do
@@ -66,6 +70,12 @@ defmodule SSH do
       reraise SSH.ConnectionError, "error connecting to #{remote}"
   end
 
+  @type retval :: 0..255
+  @type run_content :: iodata | {String.t, String.t}
+  @type run_result :: {:ok, run_content, retval} | {:error, term}
+
+  @impl true
+  @spec run(conn, String.t, keyword) :: run_result
   def run(conn, cmd!, options! \\ []) do
     options! = Keyword.put(options!, :control, true)
     {cmd!, options!} = adjust_run(cmd!, options!)
@@ -87,6 +97,7 @@ defmodule SSH do
     end
   end
 
+  # TODO: consider moving this out to its own module.
   defp consume(str, {status, list, retval}) when is_binary(str), do: {status, [list | str], retval}
   defp consume(token = {a, b}, {status, list, retval}) when is_atom(a) and is_binary(b) do
     {status, [token | list], retval}
