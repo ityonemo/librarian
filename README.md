@@ -64,7 +64,6 @@ to send to the *standard in* of your remote ssh command.
 
 These are the basic use cases.  You can find more information about more advanced use cases at [https://hexdocs.pm/librarian](https://hexdocs.pm/librarian).
 
-
 ## Installation
 
 This package can be installed by adding `librarian` to your list of dependencies
@@ -78,4 +77,18 @@ def deps do
 end
 ```
 
+## Testing
 
+Almost all of Librarian's tests are integration tests.  These tests are end-to-end and run against an active, default Linux SSH server.  To properly run these tests, you should have the following:
+
+- The latest version of [OpenSSH](https://openssh.com)
+- A default, passwordless `id_rsa.pub` in your `~/.ssh` directory.
+  ```
+  [ -f ~/.ssh/id_rsa.pub ] || ssh-keygen -t rsa -N "" -f ~/.ssh/id_rsa.pub
+  ```
+- The default key as an authorized key.
+  ```
+  cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+  ```
+
+We will be working on setting up alternative testing strategies in the future.
