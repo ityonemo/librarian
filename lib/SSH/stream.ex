@@ -134,7 +134,7 @@ defmodule SSH.Stream do
     {:halt, stream}
   end
   defp process_packet(stream, packet) do
-    wrong_source(stream, packet, "unexpected channel: #{elem packet, 2}")
+    wrong_source(stream, packet, "unexpected channel: #{elem packet, 1}")
   end
 
   defp control(%{control: true}, v), do: [v]
@@ -142,7 +142,7 @@ defmodule SSH.Stream do
 
   #TODO: tag log messages with SSH metadata.
   defp wrong_source(stream, packet, msg) do
-    Logger.warn("ssh packet of type #{elem packet, 1} received from #{msg}")
+    Logger.warn("ssh packet of type #{elem packet, 0} received from #{msg}")
     {[], stream}
   end
 
