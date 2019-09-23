@@ -22,6 +22,8 @@ defmodule LibrarianTest.RegressionTest do
       SSH.send!(conn, "test_content", @testpath1)
       SSH.run!(conn, "echo hello")
     end) =~ "unexpected"
+
+    File.rm_rf!(@testpath1)
   end
 
 end
