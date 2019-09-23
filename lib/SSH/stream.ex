@@ -27,7 +27,7 @@ defmodule SSH.Stream do
     stdout: process_fn,
     stderr: process_fn,
     packet_timeout: timeout,
-    packet_timeout_fn: (t -> t)
+    packet_timeout_fn: (t -> {list | :halt, t})
   }
 
   # TODO: change this to "__build__"
@@ -54,14 +54,15 @@ defmodule SSH.Stream do
     # open a channel.
     # TODO: do a better matching on this.
     {:ok, chan} = :ssh_connection.session_channel(conn, timeout)
-    cond do
-      cmd = options[:cmd] ->
+    if cmd = options[:cmd] do
         # TODO: punt this to the Chan module.
         :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
         # note that this is a "stateful modification" on the chan reference.
         initializer.(
           %__MODULE__{conn: conn, chan: chan, stop_time: stop_time,
           stdout: stdout, stderr: stderr, control: control, fds: fds})
+    else
+      raise ArgumentError, "no command set."
     end
   end
 
@@ -70,7 +71,19 @@ defmodule SSH.Stream do
     {:halt, state}
   end
   def next_stream(state = %{conn: conn}) do
-    timeout = milliseconds_left(state.stop_time)
+    connection_time_left = milliseconds_left(state.stop_time)
+
+    {timeout, timeout_fun} =
+      if connection_time_left < state.packet_timeout do
+        # if the connection is about to expire, let that be the timeout,
+        # and send an overall timeout message.
+        # NB: if both are infinity, this is irrelevant.
+        {connection_time_left, fn -> {[error: :timeout], %{state | halt: true}} end}
+      else
+        # if the packet timeout is about to expire, punt to the packet
+        # timeout handler.
+        {state.packet_timeout, fn -> state.packet_timeout_fn.(state) end}
+      end
 
     receive do
       # a ssh "packet" should arrive as a message to this process since it has
@@ -92,10 +105,8 @@ defmodule SSH.Stream do
         :ssh_connection.send_eof(state.conn, state.chan)
         {[], %{state | halt: true}}
 
-      # if we run out of time, we should emit a warning and halt the stream.
       after timeout ->
-        # TODO: cleanup this by emitting a close signal.
-        {[{:error, :timeout}], %{state | halt: true}}
+        timeout_fun.()
     end
   end
 

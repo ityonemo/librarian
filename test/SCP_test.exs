@@ -11,7 +11,6 @@ defmodule SSHTest.SCPTest do
     assert @content == SSH.fetch!(conn, @tmp_ssh_fetch)
   end
 
-  @tag :flaky
   @tmp_ssh_send "/tmp/ssh_send.txt"
   test "we can send an scp" do
     File.rm_rf!(@tmp_ssh_send)

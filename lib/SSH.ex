@@ -197,14 +197,16 @@ defmodule SSH do
   def send!(conn, content, remote_file, options \\ []) do
     case send(conn, content, remote_file, options) do
       :ok -> :ok
-      _ -> throw "error"
+      _ -> raise "error"
     end
   end
 
   defp init_scp_send(stream, init, content) do
     send(self(), {:ssh_send, init})
     {func, _} = stream.stdout
-    %{stream | stdout: {func, content}}
+    %{stream | stdout: {func, content},
+               packet_timeout: 100,
+               packet_timeout_fn: &SSH.SCPState.timeout_handler/1}
   end
 
   defp process_scp_send(<<0>>, content) when is_binary(content) do
