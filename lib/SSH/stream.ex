@@ -7,7 +7,10 @@ defmodule SSH.Stream do
   @enforce_keys [:conn, :chan, :stop_time, :stdout, :stderr]
   defstruct [:conn, :chan, :stop_time, :stdout, :stderr, :fds,
     control: false,
-    halt: false]
+    halt: false,
+    packet_timeout: :infinity,
+    packet_timeout_fn: nil
+  ]
 
   @type conn :: SSH.conn
   @type chan :: :ssh_connection.channel
@@ -22,7 +25,9 @@ defmodule SSH.Stream do
     control: boolean,
     halt: boolean,
     stdout: process_fn,
-    stderr: process_fn
+    stderr: process_fn,
+    packet_timeout: timeout,
+    packet_timeout_fn: (t -> t)
   }
 
   # TODO: change this to "__build__"
@@ -100,7 +105,7 @@ defmodule SSH.Stream do
     if time > 0, do: time, else: 0
   end
 
-  # TODO: make drain stateful.
+  # TODO: this is really hacky.  Please review.
   def drain(stream = %{conn: conn, chan: chan}) do
     # drain the last packets.
     receive do

@@ -47,7 +47,7 @@ Finally, you can use the underlying SSH stream functionality directly, by emitti
 ```elixir
   "some.other.server"
   |> SSH.connect!
-  |> SSH.stream("some_long_running_process")
+  |> SSH.stream!("some_long_running_process")
   |> Enum.each(SomeModule.some_action/1)
 ```
 
@@ -59,7 +59,7 @@ to send to the *standard in* of your remote ssh command.
   conn = SSH.connect!("some.other.server")
   1..1000
   |> Stream.map(&(inspect(&1) <> "\n"))
-  |> Enum.into(SSH.stream("tee > one_to_one_thousand.txt"))
+  |> Enum.into(SSH.stream!("tee > one_to_one_thousand.txt"))
 ```
 
 These are the basic use cases.  You can find more information about more advanced use cases at [https://hexdocs.pm/librarian](https://hexdocs.pm/librarian).
