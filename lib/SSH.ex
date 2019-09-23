@@ -80,12 +80,12 @@ defmodule SSH do
   @type run_result :: {:ok, run_content, retval} | {:error, term}
   @impl true
   @spec run(conn, String.t, keyword) :: run_result
-  def run(conn, cmd!, options! \\ []) do
-    options! = Keyword.put(options!, :control, true)
-    {cmd!, options!} = adjust_run(cmd!, options!)
+  def run(conn, cmd, options \\ []) do
+    options! = Keyword.put(options, :control, true)
+    {cmd!, options!} = adjust_run(cmd, options!)
 
     conn
-    |> stream(cmd!, options!)
+    |> SSH.Stream.new([{:cmd, cmd!} | options!])
     |> Enum.to_list
     |> Enum.reduce({:error, [], nil}, &consume/2)
     |> normalize_output(options!)
@@ -150,6 +150,8 @@ defmodule SSH do
   #############################################################################
   ## SCP MODE: sending
 
+  # TODO: make this work with iodata
+
   @doc """
   sends binary content to the remote host.
 
@@ -175,7 +177,7 @@ defmodule SSH do
   """
   @type send_result :: :ok | {:error, term}
   @impl true
-  @spec send(conn, iodata, Path.t, keyword) :: send_result
+  @spec send(conn, String.t, Path.t, keyword) :: send_result
   def send(conn, content, remote_file, options \\ []) do
     perms = Keyword.get(options, :permissions, 0o644)
     size = :erlang.size(content)
@@ -292,8 +294,8 @@ defmodule SSH do
     [content]
   end
 
-  @spec stream(conn, String.t, keyword) :: SSH.Stream.t
-  def stream(conn, cmd, options \\ []) do
+  @spec stream!(conn, String.t, keyword) :: SSH.Stream.t
+  def stream!(conn, cmd, options \\ []) do
     SSH.Stream.new(conn, [{:cmd, cmd} | options])
   end
 

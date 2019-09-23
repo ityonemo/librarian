@@ -25,6 +25,8 @@ defmodule SSH.Stream do
     stderr: process_fn
   }
 
+  # TODO: change this to "__build__"
+
   @spec new(conn, keyword) :: t
   def new(conn, options \\ []) do
     timeout = Keyword.get(options, :timeout, :infinity)
@@ -83,7 +85,7 @@ defmodule SSH.Stream do
 
       :ssh_eof ->
         :ssh_connection.send_eof(state.conn, state.chan)
-        {:halt, %{state | halt: true}}
+        {[], %{state | halt: true}}
 
       # if we run out of time, we should emit a warning and halt the stream.
       after timeout ->
@@ -98,9 +100,23 @@ defmodule SSH.Stream do
     if time > 0, do: time, else: 0
   end
 
-  def last_stream(chan) do
-    # TODO: clean up channel resources here.
-    chan
+  # TODO: make drain stateful.
+  def drain(stream = %{conn: conn, chan: chan}) do
+    # drain the last packets.
+    receive do
+      {:eof, ^conn, {:eof, ^chan}} ->
+        drain(stream)
+      {:ssh_cm, ^conn, {:exit_status, ^chan, _status}} ->
+        drain(stream)
+      {:ssh_cm, ^conn, {:closed, ^chan}} ->
+        drain(stream)
+      after 100 ->
+        stream
+    end
+  end
+  def last_stream(stream) do
+    drain(stream)
+    :ssh_connection.close(stream.conn, stream.chan)
   end
 
   #TODO: change all "state" to "stream"
@@ -126,6 +142,9 @@ defmodule SSH.Stream do
   end
   defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
     {control(stream, :eof), stream}
+  end
+  defp process_packet(stream, {:eof, _}) do
+    {[], stream}
   end
   defp process_packet(stream = %{chan: chan}, {:exit_status, chan, status}) do
     {control(stream, {:retval, status}), stream}
