@@ -7,7 +7,10 @@ defmodule SSH.Stream do
   @enforce_keys [:conn, :chan, :stop_time, :stdout, :stderr]
   defstruct [:conn, :chan, :stop_time, :stdout, :stderr, :fds,
     control: false,
-    halt: false]
+    halt: false,
+    packet_timeout: :infinity,
+    packet_timeout_fn: nil
+  ]
 
   @type conn :: SSH.conn
   @type chan :: :ssh_connection.channel
@@ -22,8 +25,12 @@ defmodule SSH.Stream do
     control: boolean,
     halt: boolean,
     stdout: process_fn,
-    stderr: process_fn
+    stderr: process_fn,
+    packet_timeout: timeout,
+    packet_timeout_fn: (t -> {list | :halt, t})
   }
+
+  # TODO: change this to "__build__"
 
   @spec new(conn, keyword) :: t
   def new(conn, options \\ []) do
@@ -47,14 +54,15 @@ defmodule SSH.Stream do
     # open a channel.
     # TODO: do a better matching on this.
     {:ok, chan} = :ssh_connection.session_channel(conn, timeout)
-    cond do
-      cmd = options[:cmd] ->
+    if cmd = options[:cmd] do
         # TODO: punt this to the Chan module.
         :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
         # note that this is a "stateful modification" on the chan reference.
         initializer.(
           %__MODULE__{conn: conn, chan: chan, stop_time: stop_time,
           stdout: stdout, stderr: stderr, control: control, fds: fds})
+    else
+      raise ArgumentError, "no command set."
     end
   end
 
@@ -63,7 +71,19 @@ defmodule SSH.Stream do
     {:halt, state}
   end
   def next_stream(state = %{conn: conn}) do
-    timeout = milliseconds_left(state.stop_time)
+    connection_time_left = milliseconds_left(state.stop_time)
+
+    {timeout, timeout_fun} =
+      if connection_time_left < state.packet_timeout do
+        # if the connection is about to expire, let that be the timeout,
+        # and send an overall timeout message.
+        # NB: if both are infinity, this is irrelevant.
+        {connection_time_left, fn -> {[error: :timeout], %{state | halt: true}} end}
+      else
+        # if the packet timeout is about to expire, punt to the packet
+        # timeout handler.
+        {state.packet_timeout, fn -> state.packet_timeout_fn.(state) end}
+      end
 
     receive do
       # a ssh "packet" should arrive as a message to this process since it has
@@ -83,12 +103,10 @@ defmodule SSH.Stream do
 
       :ssh_eof ->
         :ssh_connection.send_eof(state.conn, state.chan)
-        {:halt, %{state | halt: true}}
+        {[], %{state | halt: true}}
 
-      # if we run out of time, we should emit a warning and halt the stream.
       after timeout ->
-        # TODO: cleanup this by emitting a close signal.
-        {[{:error, :timeout}], %{state | halt: true}}
+        timeout_fun.()
     end
   end
 
@@ -98,9 +116,23 @@ defmodule SSH.Stream do
     if time > 0, do: time, else: 0
   end
 
-  def last_stream(chan) do
-    # TODO: clean up channel resources here.
-    chan
+  # TODO: this is really hacky.  Please review.
+  def drain(stream = %{conn: conn, chan: chan}) do
+    # drain the last packets.
+    receive do
+      {:eof, ^conn, {:eof, ^chan}} ->
+        drain(stream)
+      {:ssh_cm, ^conn, {:exit_status, ^chan, _status}} ->
+        drain(stream)
+      {:ssh_cm, ^conn, {:closed, ^chan}} ->
+        drain(stream)
+      after 100 ->
+        stream
+    end
+  end
+  def last_stream(stream) do
+    drain(stream)
+    :ssh_connection.close(stream.conn, stream.chan)
   end
 
   #TODO: change all "state" to "stream"
@@ -126,6 +158,9 @@ defmodule SSH.Stream do
   end
   defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
     {control(stream, :eof), stream}
+  end
+  defp process_packet(stream, {:eof, _}) do
+    {[], stream}
   end
   defp process_packet(stream = %{chan: chan}, {:exit_status, chan, status}) do
     {control(stream, {:retval, status}), stream}

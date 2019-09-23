@@ -8,7 +8,7 @@ defmodule SSHTest.StreamIngressTest do
 
     ssh_stream = "localhost"
     |> SSH.connect!
-    |> SSH.stream("tee #{@footxt} | wc -m")
+    |> SSH.stream!("tee #{@footxt} | wc -m")
 
     output = ["foo"]
     |> Enum.into(ssh_stream)

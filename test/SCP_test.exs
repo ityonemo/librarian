@@ -9,6 +9,7 @@ defmodule SSHTest.SCPTest do
 
     conn = SSH.connect!("localhost")
     assert @content == SSH.fetch!(conn, @tmp_ssh_fetch)
+    File.rm_rf!(@tmp_ssh_fetch)
   end
 
   @tmp_ssh_send "/tmp/ssh_send.txt"
@@ -18,5 +19,6 @@ defmodule SSHTest.SCPTest do
     SSH.send!(conn, @content, @tmp_ssh_send)
 
     assert @content == File.read!(@tmp_ssh_send)
+    File.rm_rf!(@tmp_ssh_send)
   end
 end

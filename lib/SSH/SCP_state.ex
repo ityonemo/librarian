@@ -26,4 +26,8 @@ defmodule SSH.SCPState do
     %__MODULE__{state | size: size, file: file, permissions: perm, in_file: true}
   end
 
+  def timeout_handler(stream) do
+    SSH.Stream.send_packet(stream, <<0>>)
+  end
+
 end
