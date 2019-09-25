@@ -182,7 +182,7 @@ defmodule SSH.Stream do
   end
 
   ###################################################################
-  ## stream data processing
+  ## stream data processor selection
 
   defp processor_for(options), do: {
     get_processor(options[:stdout], :stdout),
@@ -195,6 +195,7 @@ defmodule SSH.Stream do
   defp get_processor(:stdout, _), do: &silent(IO.write(&1))
   defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1))
   defp get_processor(:raw, device), do: &[{device, &1}]
+  defp get_processor(:silent, _), do: &silent/1
   defp get_processor({:file, fd}, _), do: &silent(IO.write(fd, &1))
   # stdout defaults to send to the stream and stderr defaults to print to stderr
   defp get_processor(_, :stdout), do: get_processor(:stream, :stdout)
@@ -213,10 +214,6 @@ defmodule SSH.Stream do
         [{mode, {:file, fd}}]
       _ -> []
     end)
-  end
-
-  defp cleanup_fds(stream) do
-    Enum.each(stream.fds, fn {_, fd} -> File.close(fd) end)
   end
 
   ###################################################################

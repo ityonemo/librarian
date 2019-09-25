@@ -34,9 +34,14 @@ defmodule SSH do
 
     new_options = options
     |> Keyword.merge(login)
-    |> Keyword.drop([:port, :login])
+    |> Keyword.drop([:port, :login, :label])
 
-    :ssh.connect(remote, port, new_options)
+    case :ssh.connect(remote, port, new_options) do
+      res = {:ok, conn} ->
+        if options[:label], do: send(self(), {:"$ssh", options[:label], conn})
+        res
+      any -> any
+    end
   end
   def connect(remote, options) when is_binary(remote) do
     remote
@@ -93,11 +98,11 @@ defmodule SSH do
 
   def run!(conn, cmd, options \\ []) do
     case run(conn, cmd, options) do
-      {:ok, stdout, 0} -> stdout
-      {:ok, _stdout, retcode} ->
-        raise "errored with retcode #{retcode}"
+      {:ok, result, 0} -> result
+      {:ok, _result, retcode} ->
+        raise "command errored with retcode #{retcode}"
       error ->
-        raise inspect(error)
+        raise "ssh errored with #{inspect(error)}"
     end
   end
 
@@ -121,22 +126,27 @@ defmodule SSH do
         |> Enum.group_by(fn {key, _} -> key end, fn {_, value} -> value end)
 
         result = {
-          :erlang.iolist_to_binary(tuple_map.stdout),
-          :erlang.iolist_to_binary(tuple_map.stderr)
+          :erlang.iolist_to_binary(tuple_map[:stdout] || []),
+          :erlang.iolist_to_binary(tuple_map[:stderr] || [])
         }
 
         {a, result, b}
     end
   end
+  defp normalize_output(error, _options), do: error
 
   defp adjust_run(cmd, options) do
-    dir = options[:dir]
+    # drop any naked as: :tuple pairs.
+    options! = options -- [as: :tuple]
+
+    dir = options![:dir]
     if dir do
-      {"cd #{dir}; " <> cmd, refactor(options)}
+      {"cd #{dir}; " <> cmd, refactor(options!)}
     else
-      {cmd, refactor(options)}
+      {cmd, refactor(options!)}
     end
   end
+
   defp refactor(options) do
     if options[:io_tuple] do
       options
@@ -302,9 +312,19 @@ defmodule SSH do
   end
 
   @doc """
-  closes the ssh connection
+  closes the ssh connection.
+
+  you may also close a ssh connection that has been labeled with an atom.
   """
-  @spec close(conn) :: :ok
-  def close(conn), do: :ssh.close(conn)
+  @spec close(conn | atom) :: :ok | {:error, String.t}
+  def close(conn) when is_pid(conn), do: :ssh.close(conn)
+  def close(label) do
+    receive do
+      {:"$ssh", ^label, pid} ->
+        :ssh.close(pid)
+      after 0 ->
+        {:error, "ssh connection with label #{label} not found"}
+    end
+  end
 
 end

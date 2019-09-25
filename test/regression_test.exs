@@ -10,7 +10,6 @@ defmodule LibrarianTest.RegressionTest do
 
   @testpath1 "/tmp/test_path_1"
 
-  @tag :one
   test "stream used as input leaks extra stuff" do
     File.rm_rf!(@testpath1)
 
@@ -24,6 +23,17 @@ defmodule LibrarianTest.RegressionTest do
     end) =~ "unexpected"
 
     File.rm_rf!(@testpath1)
+  end
+
+  # identified 25 Sep 2019, while testing.  If you run a
+  # program that doesn't output either stdout or stdin,
+  # it will cause an error when outputting as tuple.
+
+  @tag :one
+  test "output as tuple fail" do
+    conn = SSH.connect!("localhost")
+    assert {"hello\n", ""} = SSH.run!(conn, "echo hello", io_tuple: true)
+    assert {"", "hello\n"} = SSH.run!(conn, "echo hello 1>&2", io_tuple: true)
   end
 
 end
