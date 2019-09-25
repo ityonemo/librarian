@@ -12,16 +12,40 @@ defmodule SSH do
 
   @doc """
 
-  options:
+  ### options:
 
   - `login:` username to log in.
   - `port:`  port to use to ssh, defaults to 22.
+  - `label:` see [labels](#labels)
 
   and other SSH options.  Some conversions between ssh options and SSH.connect options:
 
   | ssh commandline option    | SSH library option            |
   | ------------------------- | ----------------------------- |
   | `-o NoStrictHostChecking` | `silently_accept_hosts: true` |
+
+  ### labels:
+
+  You can label your ssh connection to provide a side-channel for
+  correctly closing the connection pid.  This is most useful in
+  the context of `with` blocks.  As an example, the following
+  code works:
+
+  ```elixir
+  def run_ssh_tasks do
+    with {:ok, conn} <- SSH.connect("some_host", label: :this_task),
+         {:ok, _result1, 0} <- SSH.run(conn, "some_command"),
+         {:ok, result2, 0} <- SSH.run(conn, "some other command") do
+      {:ok, result1}
+    end
+  after
+    SSH.close(:this_task)
+  end
+  ```
+
+  The task label may be any term except for a pid or nil, and the ssh
+  connection label is stored in the process mailbox, so the label will
+  not be valid across process boundaries.
   """
   @type connect_result :: {:ok, SSH.conn} | {:error, any}
   @impl true
@@ -36,12 +60,9 @@ defmodule SSH do
     |> Keyword.merge(login)
     |> Keyword.drop([:port, :login, :label])
 
-    case :ssh.connect(remote, port, new_options) do
-      res = {:ok, conn} ->
-        if options[:label], do: send(self(), {:"$ssh", options[:label], conn})
-        res
-      any -> any
-    end
+    remote
+    |> :ssh.connect(port, new_options)
+    |> stash_label(options[:label])
   end
   def connect(remote, options) when is_binary(remote) do
     remote
@@ -53,6 +74,17 @@ defmodule SSH do
     |> :inet.ntoa
     |> connect(options)
   end
+
+  @spec stash_label({:ok, conn} | {:error, any}, term) :: {:ok, conn} | {:error, any} | no_return
+  defp stash_label(res, nil), do: res
+  defp stash_label(_, pid) when is_pid(pid) do
+    raise ArgumentError, "you can't make a pid label for an SSH connection."
+  end
+  defp stash_label(res = {:ok, conn}, label) do
+    send(self(), {:"$ssh", label, conn})
+    res
+  end
+  defp stash_label(res, _), do: res
 
   # TODO: consider moving this out to a different module.
   @spec normalize(nil | binary | charlist) :: [{:user, charlist}]
