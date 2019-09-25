@@ -12,16 +12,40 @@ defmodule SSH do
 
   @doc """
 
-  options:
+  ### options:
 
   - `login:` username to log in.
   - `port:`  port to use to ssh, defaults to 22.
+  - `label:` see [labels](#labels)
 
   and other SSH options.  Some conversions between ssh options and SSH.connect options:
 
   | ssh commandline option    | SSH library option            |
   | ------------------------- | ----------------------------- |
   | `-o NoStrictHostChecking` | `silently_accept_hosts: true` |
+
+  ### labels:
+
+  You can label your ssh connection to provide a side-channel for
+  correctly closing the connection pid.  This is most useful in
+  the context of `with` blocks.  As an example, the following
+  code works:
+
+  ```elixir
+  def run_ssh_tasks do
+    with {:ok, conn} <- SSH.connect("some_host", label: :this_task),
+         {:ok, _result1, 0} <- SSH.run(conn, "some_command"),
+         {:ok, result2, 0} <- SSH.run(conn, "some other command") do
+      {:ok, result1}
+    end
+  after
+    SSH.close(:this_task)
+  end
+  ```
+
+  The task label may be any term except for a pid or nil, and the ssh
+  connection label is stored in the process mailbox, so the label will
+  not be valid across process boundaries.
   """
   @type connect_result :: {:ok, SSH.conn} | {:error, any}
   @impl true
@@ -34,9 +58,11 @@ defmodule SSH do
 
     new_options = options
     |> Keyword.merge(login)
-    |> Keyword.drop([:port, :login])
+    |> Keyword.drop([:port, :login, :label])
 
-    :ssh.connect(remote, port, new_options)
+    remote
+    |> :ssh.connect(port, new_options)
+    |> stash_label(options[:label])
   end
   def connect(remote, options) when is_binary(remote) do
     remote
@@ -48,6 +74,17 @@ defmodule SSH do
     |> :inet.ntoa
     |> connect(options)
   end
+
+  @spec stash_label({:ok, conn} | {:error, any}, term) :: {:ok, conn} | {:error, any} | no_return
+  defp stash_label(res, nil), do: res
+  defp stash_label(_, pid) when is_pid(pid) do
+    raise ArgumentError, "you can't make a pid label for an SSH connection."
+  end
+  defp stash_label(res = {:ok, conn}, label) do
+    send(self(), {:"$ssh", label, conn})
+    res
+  end
+  defp stash_label(res, _), do: res
 
   # TODO: consider moving this out to a different module.
   @spec normalize(nil | binary | charlist) :: [{:user, charlist}]
@@ -93,11 +130,11 @@ defmodule SSH do
 
   def run!(conn, cmd, options \\ []) do
     case run(conn, cmd, options) do
-      {:ok, stdout, 0} -> stdout
-      {:ok, _stdout, retcode} ->
-        raise "errored with retcode #{retcode}"
+      {:ok, result, 0} -> result
+      {:ok, _result, retcode} ->
+        raise "command errored with retcode #{retcode}"
       error ->
-        raise inspect(error)
+        raise "ssh errored with #{inspect(error)}"
     end
   end
 
@@ -121,22 +158,27 @@ defmodule SSH do
         |> Enum.group_by(fn {key, _} -> key end, fn {_, value} -> value end)
 
         result = {
-          :erlang.iolist_to_binary(tuple_map.stdout),
-          :erlang.iolist_to_binary(tuple_map.stderr)
+          :erlang.iolist_to_binary(tuple_map[:stdout] || []),
+          :erlang.iolist_to_binary(tuple_map[:stderr] || [])
         }
 
         {a, result, b}
     end
   end
+  defp normalize_output(error, _options), do: error
 
   defp adjust_run(cmd, options) do
-    dir = options[:dir]
+    # drop any naked as: :tuple pairs.
+    options! = options -- [as: :tuple]
+
+    dir = options![:dir]
     if dir do
-      {"cd #{dir}; " <> cmd, refactor(options)}
+      {"cd #{dir}; " <> cmd, refactor(options!)}
     else
-      {cmd, refactor(options)}
+      {cmd, refactor(options!)}
     end
   end
+
   defp refactor(options) do
     if options[:io_tuple] do
       options
@@ -302,9 +344,19 @@ defmodule SSH do
   end
 
   @doc """
-  closes the ssh connection
+  closes the ssh connection.
+
+  you may also close a ssh connection that has been labeled with an atom.
   """
-  @spec close(conn) :: :ok
-  def close(conn), do: :ssh.close(conn)
+  @spec close(conn | atom) :: :ok | {:error, String.t}
+  def close(conn) when is_pid(conn), do: :ssh.close(conn)
+  def close(label) do
+    receive do
+      {:"$ssh", ^label, pid} ->
+        :ssh.close(pid)
+      after 0 ->
+        {:error, "ssh connection with label #{label} not found"}
+    end
+  end
 
 end
