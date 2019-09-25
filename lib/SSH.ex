@@ -301,4 +301,10 @@ defmodule SSH do
     SSH.Stream.new(conn, [{:cmd, cmd} | options])
   end
 
+  @doc """
+  closes the ssh connection
+  """
+  @spec close(conn) :: :ok
+  def close(conn), do: :ssh.close(conn)
+
 end
