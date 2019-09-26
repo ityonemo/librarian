@@ -122,7 +122,7 @@ defmodule SSH do
     {cmd!, options!} = adjust_run(cmd, options!)
 
     conn
-    |> SSH.Stream.new([{:cmd, cmd!} | options!])
+    |> SSH.Stream.__build__([{:cmd, cmd!} | options!])
     |> Enum.to_list
     |> Enum.reduce({:error, [], nil}, &consume/2)
     |> normalize_output(options!)
@@ -224,7 +224,7 @@ defmodule SSH do
     perms = Keyword.get(options, :permissions, 0o644)
     size = :erlang.size(content)
     filename = Path.basename(remote_file)
-    SSH.Stream.new(conn,
+    SSH.Stream.__build__(conn,
       cmd: "scp -t #{remote_file}",
       stdout: &process_scp_send(&1, &2),
       init: &init_scp_send(&1,
@@ -310,7 +310,7 @@ defmodule SSH do
   @spec fetch(conn, Path.t, keyword) :: fetch_result
   def fetch(conn, remote_file, _options \\ []) do
     binary_result = conn
-    |> SSH.Stream.new(cmd: "scp -f #{remote_file}",
+    |> SSH.Stream.__build__(cmd: "scp -f #{remote_file}",
                       stdout: &process_scp_fetch/1,
                       init: &init_scp_fetch/1)
     |> Enum.reduce(%SSH.SCPState{}, &SSH.SCPState.stream_reducer/2)
@@ -340,7 +340,7 @@ defmodule SSH do
 
   @spec stream!(conn, String.t, keyword) :: SSH.Stream.t
   def stream!(conn, cmd, options \\ []) do
-    SSH.Stream.new(conn, [{:cmd, cmd} | options])
+    SSH.Stream.__build__(conn, [{:cmd, cmd} | options])
   end
 
   @doc """
@@ -348,7 +348,7 @@ defmodule SSH do
 
   you may also close a ssh connection that has been labeled with an atom.
   """
-  @spec close(conn | atom) :: :ok | {:error, String.t}
+  @spec close(conn | term) :: :ok | {:error, String.t}
   def close(conn) when is_pid(conn), do: :ssh.close(conn)
   def close(label) do
     receive do

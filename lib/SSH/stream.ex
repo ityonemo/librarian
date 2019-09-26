@@ -30,10 +30,8 @@ defmodule SSH.Stream do
     packet_timeout_fn: (t -> {list | :halt, t})
   }
 
-  # TODO: change this to "__build__"
-
-  @spec new(conn, keyword) :: t
-  def new(conn, options \\ []) do
+  @spec __build__(conn, keyword) :: t
+  def __build__(conn, options \\ []) do
     timeout = Keyword.get(options, :timeout, :infinity)
     control = Keyword.get(options, :control, false)
     stop_time = case timeout do

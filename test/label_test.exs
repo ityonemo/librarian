@@ -12,7 +12,6 @@ defmodule SSHTest.LabelTest do
     refute Process.alive?(conn)
   end
 
-
   def bad_process do
     with {:ok, conn} <- SSH.connect("localhost", label: :foo),
          _ <- send(self(), {:conn, conn}),
