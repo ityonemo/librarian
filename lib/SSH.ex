@@ -4,6 +4,9 @@ defmodule SSH do
 
   @behaviour SSH.Api
 
+  alias SSH.SCP.Fetch
+  alias SSH.SCP.Send
+
   require Logger
 
   @type ip4 :: :inet.ip4_address
@@ -228,8 +231,9 @@ defmodule SSH do
     conn
     |> SSH.Stream.__build__(
         cmd: "scp -t #{remote_file}",
-        module: {SSH.SCP.Send, initializer})
-    |> Enum.reduce(:ok, &SSH.SCP.Send.reducer/2)
+        module: {Send, initializer},
+        packet_timeout: 500)
+    |> Enum.reduce(:ok, &Send.reducer/2)
   end
 
   @spec send!(conn, iodata, Path.t) :: :ok | no_return
@@ -275,8 +279,9 @@ defmodule SSH do
   def fetch(conn, remote_file, _options \\ []) do
     binary_result = conn
     |> SSH.Stream.__build__(cmd: "scp -f #{remote_file}",
-                      module: {SSH.SCP.Fetch, :ok})
-    |> Enum.reduce(:ok, &SSH.SCP.Fetch.reducer/2)
+                      module: {Fetch, :ok},
+                      packet_timeout: 500)
+    |> Enum.reduce(:ok, &Fetch.reducer/2)
   end
 
   def fetch!(conn, remote_file, options \\ []) do
@@ -297,6 +302,7 @@ defmodule SSH do
 
   you may also close a ssh connection that has been labeled with an atom.
   """
+  @impl true
   @spec close(conn | term) :: :ok | {:error, String.t}
   def close(conn) when is_pid(conn), do: :ssh.close(conn)
   def close(label) do

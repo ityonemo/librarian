@@ -20,6 +20,6 @@ defmodule SSH.Api do
   @callback send(SSH.conn, iodata, Path.t, keyword) :: SSH.send_result
   @callback send(SSH.conn, iodata, Path.t) :: SSH.send_result
 
-  @callback close(term) :: :ok
+  @callback close(term) :: :ok | {:error, String.t}
 
 end

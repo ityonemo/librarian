@@ -20,6 +20,8 @@ defmodule SSH.SCP.Fetch do
     {:ok, :ok}
   end
 
+  #TODO : work with the rest of the stuff here!
+
   @impl true
   @spec stdout(binary, acc) :: {[], acc}
   def stdout("C0" <> <<_perms :: binary-size(3)>> <> rest, acc) do
@@ -36,10 +38,10 @@ defmodule SSH.SCP.Fetch do
   def stderr(string, acc), do: {[stderr: string], acc}
 
   @impl true
-  @spec packet_timeout(acc) :: acc
+  @spec packet_timeout(acc) :: {[], acc}
   def packet_timeout(acc) do
     send(self(), {:ssh_send, <<0>>})
-    acc
+    {[], acc}
   end
 
   def reducer(value, :ok) when is_binary(value) do

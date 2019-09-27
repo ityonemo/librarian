@@ -41,6 +41,7 @@ defmodule SSH.Stream do
   @spec __build__(conn, keyword) :: t
   def __build__(conn, options \\ []) do
     timeout = Keyword.get(options, :timeout, :infinity)
+    packet_timeout = Keyword.get(options, :packet_timeout, :infinity)
     control = Keyword.get(options, :control, false)
     stop_time = case timeout do
       :infinity -> :infinity
@@ -53,7 +54,8 @@ defmodule SSH.Stream do
       Keyword.merge(options,
         stdout: &module.stdout/2,
         stderr: &module.stderr/2,
-        init: fn stream -> module.init(stream, init_val) end)
+        init: fn stream -> module.init(stream, init_val) end,
+        packet_timeout_fn: &module.packet_timeout/1)
     else
       options
     end
@@ -67,6 +69,9 @@ defmodule SSH.Stream do
     # set the command.
     cmd = if options![:cmd], do: options![:cmd], else: raise ArgumentError, "you must supply a command for SSH."
 
+    #get the packet timeout function.
+    packet_timeout_fn = options![:packet_timeout_fn]
+
     # open a channel.
     # TODO: do a better matching on these.
     {:ok, chan} = :ssh_connection.session_channel(conn, timeout)
@@ -77,7 +82,10 @@ defmodule SSH.Stream do
       options![:init],
       %__MODULE__{
         conn: conn, chan: chan, stop_time: stop_time,
-        stdout: stdout, stderr: stderr, control: control, fds: fds})
+        stdout: stdout, stderr: stderr,
+        packet_timeout: packet_timeout,
+        packet_timeout_fn: packet_timeout_fn,
+        control: control, fds: fds})
     stream
   end
 
@@ -92,48 +100,54 @@ defmodule SSH.Stream do
   end
 
   @spec next_stream(t) :: {list, t}
-  def next_stream(state = %{halt: true}) do
-    {:halt, state}
+  def next_stream(stream = %{halt: true}) do
+    {:halt, stream}
   end
-  def next_stream(state = %{conn: conn}) do
-    connection_time_left = milliseconds_left(state.stop_time)
+  def next_stream(stream = %{conn: conn}) do
+    connection_time_left = milliseconds_left(stream.stop_time)
 
-    # TODO: make this more sensible.
-    {timeout, timeout_fun} =
-      if connection_time_left < state.packet_timeout do
+    {timeout, timeout_mode} =
+      if connection_time_left < stream.packet_timeout do
         # if the connection is about to expire, let that be the timeout,
         # and send an overall timeout message.
         # NB: if both are infinity, this is irrelevant.
-        {connection_time_left, fn -> {[error: :timeout], %{state | halt: true}} end}
+        {connection_time_left, :global}
       else
         # if the packet timeout is about to expire, punt to the packet
         # timeout handler.
-        {state.packet_timeout, fn -> state.packet_timeout_fn.(state) end}
+        {stream.packet_timeout, :packet}
       end
 
     receive do
       # a ssh "packet" should arrive as a message to this process since it has
       # been registered with the :ssh module subsystem.
       {:ssh_cm, ^conn, packet} ->
-        process_packet(state, packet)
+        process_packet(stream, packet)
 
       # if the chan and conn values don't match, then we should drop the packet
       # and issue a warning.
       {:ssh_cm, wrong_conn, packet} ->
-        wrong_source(state, packet, "unexpected connection: #{inspect wrong_conn}")
+        wrong_source(stream, packet, "unexpected connection: #{inspect wrong_conn}")
 
       # also allow messages to be SENT along the ssh channel, asynchronously,
       # using erlang messages as a "side channel"
       {:ssh_send, payload} ->
-        send_packet(state, payload)
+        send_packet(stream, payload)
 
       :ssh_eof ->
         # TODO: figure out what to do with this.
-        :ssh_connection.send_eof(state.conn, state.chan)
-        {[], %{state | halt: true}}
+        :ssh_connection.send_eof(stream.conn, stream.chan)
+        {[], %{stream | halt: true}}
 
       after timeout ->
-        timeout_fun.()
+        case timeout_mode do
+          :global -> {[error: :timeout], %{stream | halt: true}}
+          :packet -> if stream.packet_timeout_fn do
+            stream.packet_timeout_fn.(stream)
+          else
+            {[], stream}
+          end
+        end
     end
   end
 
@@ -162,7 +176,6 @@ defmodule SSH.Stream do
     :ssh_connection.close(stream.conn, stream.chan)
   end
 
-  #TODO: change all "state" to "stream"
   defp process_packet(stream = %{chan: chan}, {:data, chan, 0, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
     {output, new_data} = stream.stdout.(data, stream.data)
@@ -237,7 +250,6 @@ defmodule SSH.Stream do
   ###################################################################
   ## interactive streaming capabilities
 
-  # TODO: replace "state" everywhere with "stream"
   def send_packet(stream, payload) do
     :ssh_connection.send(stream.conn, stream.chan, payload)
     {[], stream}

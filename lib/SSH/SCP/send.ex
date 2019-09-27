@@ -54,19 +54,19 @@ defmodule SSH.SCP.Send do
   def stderr(string, acc), do: {[stderr: string], acc}
 
   @impl true
-  @spec packet_timeout(acc) :: acc
+  @spec packet_timeout(acc) :: {[], acc}
   def packet_timeout(acc) do
     send(self(), {:ssh_send, <<0>>})
-    acc
+    {[], acc}
   end
 
   defp find_size(content) when is_binary(content), do: :erlang.size(content)
   defp find_size([a | b]), do: find_size(a) + find_size(b)
 
-  def reducer(v = {:error, val}, :ok), do: v
-  def reducer({:stderr, stderr}, b) do
+  def reducer(error = {:error, _}, :ok), do: error
+  def reducer({:stderr, stderr}, acc) do
     IO.write(:stderr, stderr)
-    b
+    acc
   end
-  def reducer(a, b), do: b
+  def reducer(_, acc), do: acc
 end

@@ -33,5 +33,5 @@ defmodule SSH.ModuleApi do
   """
   @callback stderr(stream_data::binary, acc::term) :: {output::[term] | :halt, acc::term}
 
-  @callback packet_timeout(acc::term) :: acc::term
+  @callback packet_timeout(acc::SSH.Stream.t) :: {[], SSH.Stream.t}
 end

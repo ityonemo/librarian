@@ -16,6 +16,7 @@ defmodule SSHTest.SCPTest do
   end
 
   @tmp_ssh_send "/tmp/ssh_send.txt"
+  @tag timeout: 10000
   test "we can send an scp" do
     File.rm_rf!(@tmp_ssh_send)
     conn = SSH.connect!("localhost")
