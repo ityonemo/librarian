@@ -123,7 +123,6 @@ defmodule SSH do
 
     conn
     |> SSH.Stream.__build__([{:cmd, cmd!} | options!])
-    |> Enum.to_list
     |> Enum.reduce({:error, [], nil}, &consume/2)
     |> normalize_output(options!)
   end
@@ -194,6 +193,8 @@ defmodule SSH do
 
   # TODO: make this work with iodata
 
+  @type send_result :: :ok | {:error, term}
+
   @doc """
   sends binary content to the remote host.
 
@@ -217,65 +218,28 @@ defmodule SSH do
   SSH.send(conn, "foo", "path/to/desired/file")
   ```
   """
-  @type send_result :: :ok | {:error, term}
   @impl true
   @spec send(conn, String.t, Path.t, keyword) :: send_result
   def send(conn, content, remote_file, options \\ []) do
     perms = Keyword.get(options, :permissions, 0o644)
-    size = :erlang.size(content)
     filename = Path.basename(remote_file)
-    SSH.Stream.__build__(conn,
-      cmd: "scp -t #{remote_file}",
-      stdout: &process_scp_send(&1, &2),
-      init: &init_scp_send(&1,
-        "C0#{Integer.to_string(perms, 8)} #{size} #{filename}\n",
-        content))
-    |> Stream.run
-    # TODO: replace this with "ssh stream reducer"
-    :ok
+    initializer = {filename, content, perms}
+
+    conn
+    |> SSH.Stream.__build__(
+        cmd: "scp -t #{remote_file}",
+        module: {SSH.SCP.Send, initializer})
+    |> Enum.reduce(:ok, &SSH.SCP.Send.reducer/2)
   end
 
+  @spec send!(conn, iodata, Path.t) :: :ok | no_return
   @spec send!(conn, iodata, Path.t, keyword) :: :ok | no_return
   def send!(conn, content, remote_file, options \\ []) do
     case send(conn, content, remote_file, options) do
       :ok -> :ok
-      _ -> raise "error"
+      {:error, message} ->
+        raise "error executing SCP send: #{message}"
     end
-  end
-
-  defp init_scp_send(stream, init, content) do
-    send(self(), {:ssh_send, init})
-    {func, _} = stream.stdout
-    %{stream | stdout: {func, content},
-               packet_timeout: 100,
-               packet_timeout_fn: &SSH.SCPState.timeout_handler/1}
-  end
-
-  defp process_scp_send(<<0>>, content) when is_binary(content) do
-    send(self(), {:ssh_send, content})
-    {[], :end}
-  end
-  defp process_scp_send(<<0>>, :end) do
-    # in the case of the scp_send we need to send out the EOF message ourselves.
-    send(self(), :ssh_eof)
-    {[], :end}
-  end
-  defp process_scp_send(<<0>> <> rest, any) do
-    # sometimes the remote side will get overeager and send "other information
-    # our way.  Go ahead and ignore these single-byte zeros.
-    process_scp_send(rest, any)
-  end
-  defp process_scp_send(<<1, error :: binary>>, _) do
-    send(self(), :ssh_eof)
-    Logger.error(error)
-    {[], :end}
-  end
-  defp process_scp_send(<<2, error :: binary>>, _) do
-    # apparently OpenSSH "never sends" fatal error packets.  Just in case the
-    # specs change, we should handle this condition
-    send(self(), :ssh_eof)
-    Logger.error("fatal error: #{error}")
-    {[], :end}
   end
 
   #############################################################################
@@ -311,13 +275,8 @@ defmodule SSH do
   def fetch(conn, remote_file, _options \\ []) do
     binary_result = conn
     |> SSH.Stream.__build__(cmd: "scp -f #{remote_file}",
-                      stdout: &process_scp_fetch/1,
-                      init: &init_scp_fetch/1)
-    |> Enum.reduce(%SSH.SCPState{}, &SSH.SCPState.stream_reducer/2)
-    |> Map.get(:content)
-    |> :erlang.iolist_to_binary
-
-    {:ok, binary_result}
+                      module: {SSH.SCP.Fetch, :ok})
+    |> Enum.reduce(:ok, &SSH.SCP.Fetch.reducer/2)
   end
 
   def fetch!(conn, remote_file, options \\ []) do
@@ -326,16 +285,6 @@ defmodule SSH do
       # TODO: better raise result below.
       _ -> throw "oops"
     end
-  end
-
-  defp init_scp_fetch(stream) do
-    send(self(), {:ssh_send, <<0>>})
-    stream
-  end
-
-  defp process_scp_fetch(content) do
-    send(self(), {:ssh_send, <<0>>})
-    [content]
   end
 
   @spec stream!(conn, String.t, keyword) :: SSH.Stream.t

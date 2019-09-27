@@ -1,10 +1,13 @@
 defmodule SSHTest.SCPTest do
   use ExUnit.Case, async: true
 
+  @moduletag :scp
+
   @content "foo\nbar\n"
 
   @tmp_ssh_fetch "/tmp/ssh_fetch.txt"
-  test "we can do an scp" do
+
+  test "we can fetch a file with scp" do
     File.write!(@tmp_ssh_fetch, @content)
 
     conn = SSH.connect!("localhost")

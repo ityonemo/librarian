@@ -2,6 +2,8 @@ defmodule LibrarianTest.RegressionTest do
   use ExUnit.Case, async: true
   import ExUnit.CaptureLog
 
+  @moduletag :regression
+
   # identified 16 Sep 2019, in a project using
   # this as dev mode.  Unexpected packets arrive
   # because the stream exits without clearing
@@ -10,6 +12,7 @@ defmodule LibrarianTest.RegressionTest do
 
   @testpath1 "/tmp/test_path_1"
 
+  @tag :scp
   test "stream used as input leaks extra stuff" do
     File.rm_rf!(@testpath1)
 
@@ -29,7 +32,6 @@ defmodule LibrarianTest.RegressionTest do
   # program that doesn't output either stdout or stdin,
   # it will cause an error when outputting as tuple.
 
-  @tag :one
   test "output as tuple fail" do
     conn = SSH.connect!("localhost")
     assert {"hello\n", ""} = SSH.run!(conn, "echo hello", io_tuple: true)
