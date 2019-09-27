@@ -13,8 +13,6 @@ defmodule LibrarianTest.RegressionTest do
   @testpath1 "/tmp/test_path_1"
 
   @tag :scp
-
-  @tag timeout: 10000
   test "stream used as input leaks extra stuff" do
     File.rm_rf!(@testpath1)
 

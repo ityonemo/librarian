@@ -51,9 +51,7 @@ Finally, you can use the underlying SSH stream functionality directly, by emitti
   |> Enum.each(SomeModule.some_action/1)
 ```
 
-Like the `IO.Stream` struct, the `SSH.Stream` struct emitted by `SSH.stream/2` is
-both an `Enumerable` and a `Collectable`, so you can use it to accept a datastream
-to send to the *standard in* of your remote ssh command.
+Like the `IO.Stream` struct, the `SSH.Stream` struct emitted by `SSH.stream!/2` is both an `Enumerable` and a `Collectable`, so you can use it to accept a datastream to send to the *standard in* of your remote ssh command.
 
 ```elixir
   conn = SSH.connect!("some.other.server")

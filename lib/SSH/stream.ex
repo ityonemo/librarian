@@ -35,7 +35,7 @@ defmodule SSH.Stream do
     stderr: process_fn,
     packet_timeout: timeout,
     packet_timeout_fn: (t -> {list | :halt, t}),
-    data: term
+    data: any
   }
 
   @spec __build__(conn, keyword) :: t
@@ -89,15 +89,11 @@ defmodule SSH.Stream do
     stream
   end
 
+  # TODO: consider punting this to a default init.
+
   @spec run_init(nil | (t -> {:ok, term} | {:error, any}), t) :: {:ok, t} | {:error, term}
   defp run_init(nil, stream), do: {:ok, stream}
-  defp run_init(fun, stream) do
-    case fun.(stream) do
-      {:ok, data} ->
-        {:ok, %{stream | data: data}}
-      any -> any
-    end
-  end
+  defp run_init(fun, stream), do: fun.(stream)
 
   @spec next_stream(t) :: {list, t}
   def next_stream(stream = %{halt: true}) do
@@ -127,19 +123,14 @@ defmodule SSH.Stream do
       # if the chan and conn values don't match, then we should drop the packet
       # and issue a warning.
       {:ssh_cm, wrong_conn, packet} ->
-        wrong_source(stream, packet, "unexpected connection: #{inspect wrong_conn}")
+        wrong_source(stream, packet,
+          "unexpected connection: #{inspect wrong_conn}")
 
-      # also allow messages to be SENT along the ssh channel, asynchronously,
-      # using erlang messages as a "side channel"
-      {:ssh_send, payload} ->
-        send_packet(stream, payload)
-
-      :ssh_eof ->
-        # TODO: figure out what to do with this.
-        :ssh_connection.send_eof(stream.conn, stream.chan)
-        {[], %{stream | halt: true}}
+      # TODO: change it so that stream_packet_timeout_fn always has
+      # at least a null function in there.
 
       after timeout ->
+        {conn, timeout, timeout_mode}
         case timeout_mode do
           :global -> {[error: :timeout], %{stream | halt: true}}
           :packet -> if stream.packet_timeout_fn do
@@ -151,6 +142,40 @@ defmodule SSH.Stream do
     end
   end
 
+  @spec send_data(t, iodata) :: :ok
+  @doc """
+  sends an iodata payload to the stdin of the ssh stream
+
+  You should use this method inside of stderr, stdout, and packet_timeout
+  functions when you're designing interactive ssh handlers.  Note that this
+  function must be called from within the same process that the stream is
+  running on, while the stream is running.
+
+  In the future, we might write a guard that will prevent you from
+  doing this from another process.
+  """
+  def send_data(stream, payload) do
+    send(self(), {:ssh_cm, stream.conn, {:send, stream.chan, payload}})
+    :ok
+  end
+
+  @spec send_eof(t) :: :ok
+  @doc """
+  sends an end-of-file to the the ssh stream.
+
+  You should use this method inside of stderr, stdout, and packet_timeout
+  functions when you're designing interactive ssh handlers.  Note that this
+  function must be called from within the same process that the stream is
+  running on, while the stream is running.
+
+  In the future, we might write a guard that will prevent you from
+  doing this from another process.
+  """
+  def send_eof(stream) do
+    send(self(), {:ssh_cm, stream.conn, {:send_eof, stream.chan}})
+    :ok
+  end
+
   def milliseconds_left(:infinity), do: :infinity
   def milliseconds_left(stop_time) do
     time = DateTime.diff(stop_time, DateTime.utc_now, :millisecond)
@@ -158,7 +183,7 @@ defmodule SSH.Stream do
   end
 
   # TODO: this is really hacky.  Please review.
-  def drain(stream = %{conn: conn, chan: chan}) do
+  defp drain(stream = %{conn: conn, chan: chan}) do
     # drain the last packets.
     receive do
       {:eof, ^conn, {:eof, ^chan}} ->
@@ -167,7 +192,7 @@ defmodule SSH.Stream do
         drain(stream)
       {:ssh_cm, ^conn, {:closed, ^chan}} ->
         drain(stream)
-      after 100 ->
+      after 1 ->
         stream
     end
   end
@@ -176,15 +201,15 @@ defmodule SSH.Stream do
     :ssh_connection.close(stream.conn, stream.chan)
   end
 
+  # TODO: rename "process packet" to "process message"
+
   defp process_packet(stream = %{chan: chan}, {:data, chan, 0, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    {output, new_data} = stream.stdout.(data, stream.data)
-    {output, %{stream | data: new_data}}
+    stream.stdout.(data, stream)
   end
   defp process_packet(stream = %{chan: chan}, {:data, chan, 1, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    {output, new_data} = stream.stderr.(data, stream.data)
-    {output, %{stream | data: new_data}}
+    stream.stderr.(data, stream)
   end
   defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
     {control(stream, :eof), stream}
@@ -198,7 +223,17 @@ defmodule SSH.Stream do
   defp process_packet(stream = %{chan: chan}, {:closed, chan}) do
     {:halt, stream}
   end
-  defp process_packet(stream, packet) do
+  defp process_packet(stream = %{chan: chan}, {:send, chan, payload}) do
+    # TODO: figure out error handling here.
+    :ssh_connection.send(stream.conn, stream.chan, payload)
+    {[], stream}
+  end
+  defp process_packet(stream = %{chan: chan}, {:send_eof, chan}) do
+    # TODO: figure out what to do with this.
+    :ssh_connection.send_eof(stream.conn, stream.chan)
+    {[], stream}
+  end
+  defp process_packet(stream, packet) when is_tuple(packet) do
     wrong_source(stream, packet, "unexpected channel: #{elem packet, 1}")
   end
 
@@ -232,7 +267,7 @@ defmodule SSH.Stream do
   defp get_processor(_, :stdout), do: get_processor(:stream, :stdout)
   defp get_processor(_, :stderr), do: get_processor(:stderr, :stderr)
 
-  @spec silent(any, any) :: []
+  @spec silent(any, Stream.t) :: {[], Stream.t}
   defp silent(_, stream), do: {[], stream}
 
   ###################################################################
@@ -245,14 +280,6 @@ defmodule SSH.Stream do
         [{mode, {:file, fd}}]
       _ -> []
     end)
-  end
-
-  ###################################################################
-  ## interactive streaming capabilities
-
-  def send_packet(stream, payload) do
-    :ssh_connection.send(stream.conn, stream.chan, payload)
-    {[], stream}
   end
 
   ###################################################################

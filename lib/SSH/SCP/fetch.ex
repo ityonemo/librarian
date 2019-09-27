@@ -9,39 +9,38 @@ defmodule SSH.SCP.Fetch do
 
   # TODO: implement hostile scp values testing.
 
-  @type acc :: :ok
-
   @impl true
-  @spec init(SSH.Stream.t, any) :: {:ok, acc} | {:error, String.t}
-  def init(_, _) do
+  @spec init(SSH.Stream.t, any) :: {:ok, SSH.Stream.t} | {:error, String.t}
+  def init(stream, _) do
     # in order to kick off the SCP routine, we need to send an ready message,
     # which is simply a "0" byte over the standard out.
-    send(self(), {:ssh_send, <<0>>})
-    {:ok, :ok}
+    SSH.Stream.send_data(stream, <<0>>)
+    {:ok, stream}
   end
 
   #TODO : work with the rest of the stuff here!
 
   @impl true
-  @spec stdout(binary, acc) :: {[], acc}
-  def stdout("C0" <> <<_perms :: binary-size(3)>> <> rest, acc) do
-    send(self(), {:ssh_send, <<0>>})
-    {[], acc}
+  @spec stdout(binary, SSH.Stream.t) :: {[], SSH.Stream.t}
+  def stdout("C0" <> <<_perms :: binary-size(3)>> <> rest, stream) do
+    SSH.Stream.send_data(stream, <<0>>)
+    {[], stream}
   end
-  def stdout(value, acc) do
-    send(self(), {:ssh_send, <<0>>})
-    {[value], acc}
+  def stdout(value, stream) do
+    # store all inbound values into the stream.
+    SSH.Stream.send_data(stream, <<0>>)
+    {[value], stream}
   end
 
   @impl true
-  @spec stderr(binary, acc) :: {[term], acc}
-  def stderr(string, acc), do: {[stderr: string], acc}
+  @spec stderr(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  def stderr(string, stream), do: {[stderr: string], stream}
 
   @impl true
-  @spec packet_timeout(acc) :: {[], acc}
-  def packet_timeout(acc) do
-    send(self(), {:ssh_send, <<0>>})
-    {[], acc}
+  @spec packet_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
+  def packet_timeout(stream) do
+    SSH.Stream.send_data(stream, <<0>>)
+    {[], stream}
   end
 
   def reducer(value, :ok) when is_binary(value) do
