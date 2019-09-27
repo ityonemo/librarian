@@ -31,7 +31,7 @@ defmodule Librarian.MixProject do
   defp deps do
     [
       {:credo, "~> 1.1", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.21.1", only: :dev, runtime: false},
+      {:ex_doc, "~> 0.21.2", only: :dev, runtime: false},
       {:excoveralls, "~> 0.11", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 0.5", only: :dev, runtime: false}
     ]

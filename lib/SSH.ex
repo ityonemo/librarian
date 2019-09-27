@@ -14,6 +14,7 @@ defmodule SSH do
   @type conn :: :ssh.connection_ref
 
   @doc """
+  initiates an ssh connection with a remote server.
 
   ### options:
 
@@ -23,9 +24,9 @@ defmodule SSH do
 
   and other SSH options.  Some conversions between ssh options and SSH.connect options:
 
-  | ssh commandline option    | SSH library option            |
-  | ------------------------- | ----------------------------- |
-  | `-o NoStrictHostChecking` | `silently_accept_hosts: true` |
+  ssh commandline option    | SSH library option
+  --- | ---
+  `-o NoStrictHostChecking` | `silently_accept_hosts: true`
 
   ### labels:
 
