@@ -1,11 +1,18 @@
 defmodule SSH.Stream do
 
-  # TODO: rename "new" to "build"
+  @moduledoc """
+  Defines an `SSH.Stream` struct returned by `SSH.stream!/3`
+
+  Like `IO.Stream`, an SSH stream has side effects.  Any given
+  time you use it, the contents returned are likely to be different.
+  """
+
+  # TODO: marshal the processing functions into arity/2 functions always.
 
   import Logger
 
   @enforce_keys [:conn, :chan, :stop_time, :stdout, :stderr]
-  defstruct [:conn, :chan, :stop_time, :stdout, :stderr, :fds,
+  defstruct [:conn, :chan, :stop_time, :stdout, :stderr, :fds, :data,
     control: false,
     halt: false,
     packet_timeout: :infinity,
@@ -27,13 +34,12 @@ defmodule SSH.Stream do
     stdout: process_fn,
     stderr: process_fn,
     packet_timeout: timeout,
-    packet_timeout_fn: (t -> {list | :halt, t})
+    packet_timeout_fn: (t -> {list | :halt, t}),
+    data: term
   }
 
-  # TODO: change this to "__build__"
-
-  @spec new(conn, keyword) :: t
-  def new(conn, options \\ []) do
+  @spec __build__(conn, keyword) :: t
+  def __build__(conn, options \\ []) do
     timeout = Keyword.get(options, :timeout, :infinity)
     control = Keyword.get(options, :control, false)
     stop_time = case timeout do
@@ -41,28 +47,47 @@ defmodule SSH.Stream do
       delta_t when is_integer(delta_t) ->
         DateTime.add(DateTime.utc_now, timeout, :millisecond)
     end
+    # convert module assignments to the appropriate content
+    options! = if options[:module] do
+      {module, init_val} = options[:module]
+      Keyword.merge(options,
+        stdout: &module.stdout/2,
+        stderr: &module.stderr/2,
+        init: fn stream -> module.init(stream, init_val) end)
+    else
+      options
+    end
 
     # convert any 'file write' requests to a file descriptor
-    fds = fds_for(options)
+    fds = fds_for(options!)
     # determine the functions which will handle the conversion
     # of inbound ssh data packets to usable forms.
-    {stdout, stderr} = processor_for(Keyword.merge(options, fds))
+    {stdout, stderr} = processor_for(Keyword.merge(options!, fds))
 
-    # set up an initializer function that might modify the stream.
-    initializer = Keyword.get(options, :init, &(&1))
+    # set the command.
+    cmd = if options![:cmd], do: options![:cmd], else: raise ArgumentError, "you must supply a command for SSH."
 
     # open a channel.
-    # TODO: do a better matching on this.
+    # TODO: do a better matching on these.
     {:ok, chan} = :ssh_connection.session_channel(conn, timeout)
-    if cmd = options[:cmd] do
-        # TODO: punt this to the Chan module.
-        :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
-        # note that this is a "stateful modification" on the chan reference.
-        initializer.(
-          %__MODULE__{conn: conn, chan: chan, stop_time: stop_time,
-          stdout: stdout, stderr: stderr, control: control, fds: fds})
-    else
-      raise ArgumentError, "no command set."
+    # TODO: better options here.
+    :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
+
+    {:ok, stream} = run_init(
+      options![:init],
+      %__MODULE__{
+        conn: conn, chan: chan, stop_time: stop_time,
+        stdout: stdout, stderr: stderr, control: control, fds: fds})
+    stream
+  end
+
+  @spec run_init(nil | (t -> {:ok, term} | {:error, any}), t) :: {:ok, t} | {:error, term}
+  defp run_init(nil, stream), do: {:ok, stream}
+  defp run_init(fun, stream) do
+    case fun.(stream) do
+      {:ok, data} ->
+        {:ok, %{stream | data: data}}
+      any -> any
     end
   end
 
@@ -73,6 +98,7 @@ defmodule SSH.Stream do
   def next_stream(state = %{conn: conn}) do
     connection_time_left = milliseconds_left(state.stop_time)
 
+    # TODO: make this more sensible.
     {timeout, timeout_fun} =
       if connection_time_left < state.packet_timeout do
         # if the connection is about to expire, let that be the timeout,
@@ -102,6 +128,7 @@ defmodule SSH.Stream do
         send_packet(state, payload)
 
       :ssh_eof ->
+        # TODO: figure out what to do with this.
         :ssh_connection.send_eof(state.conn, state.chan)
         {[], %{state | halt: true}}
 
@@ -136,25 +163,15 @@ defmodule SSH.Stream do
   end
 
   #TODO: change all "state" to "stream"
-  defp process_packet(stream = %{chan: chan, stdout: {fun, state}},
-                      {:data, chan, 0, data}) do
-    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    {output, new_state} = fun.(data, state)
-    {output, %{stream | stdout: {fun, new_state}}}
-  end
-  defp process_packet(stream = %{chan: chan, stderr: {fun, state}},
-                      {:data, chan, 1, data}) do
-    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    {output, new_state} = fun.(data, state)
-    {output, %{stream | stderr: {fun, new_state}}}
-  end
   defp process_packet(stream = %{chan: chan}, {:data, chan, 0, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    {stream.stdout.(data), stream}
+    {output, new_data} = stream.stdout.(data, stream.data)
+    {output, %{stream | data: new_data}}
   end
   defp process_packet(stream = %{chan: chan}, {:data, chan, 1, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    {stream.stderr.(data), stream}
+    {output, new_data} = stream.stderr.(data, stream.data)
+    {output, %{stream | data: new_data}}
   end
   defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
     {control(stream, :eof), stream}
@@ -189,20 +206,21 @@ defmodule SSH.Stream do
     get_processor(options[:stderr], :stderr)
   }
 
-  defp get_processor(fun, _) when is_function(fun, 1), do: fun
-  defp get_processor(fun, _) when is_function(fun, 2), do: {fun, nil}
-  defp get_processor(:stream, _), do: &[&1]
-  defp get_processor(:stdout, _), do: &silent(IO.write(&1))
-  defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1))
-  defp get_processor(:raw, device), do: &[{device, &1}]
-  defp get_processor(:silent, _), do: &silent/1
-  defp get_processor({:file, fd}, _), do: &silent(IO.write(fd, &1))
+  # convert a user specified arity/1 value into an arity/2  with passthrough on value 2
+  defp get_processor(fun, _) when is_function(fun, 1), do: fn val, any -> {fun.(val), any} end
+  defp get_processor(fun, _) when is_function(fun, 2), do: fun
+  defp get_processor(:stream, _), do: fn value, any -> {[value], any} end
+  defp get_processor(:stdout, _), do: &silent(IO.write(&1), &2)
+  defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1), &2)
+  defp get_processor(:raw, device), do: &{[{device, &1}], &2}
+  defp get_processor(:silent, _), do: &silent/2
+  defp get_processor({:file, fd}, _), do: &silent(IO.write(fd, &1), &2)
   # stdout defaults to send to the stream and stderr defaults to print to stderr
   defp get_processor(_, :stdout), do: get_processor(:stream, :stdout)
   defp get_processor(_, :stderr), do: get_processor(:stderr, :stderr)
 
-  @spec silent(any) :: []
-  defp silent(_), do: []
+  @spec silent(any, any) :: []
+  defp silent(_, stream), do: {[], stream}
 
   ###################################################################
   ## file descriptor things
