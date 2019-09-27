@@ -3,7 +3,6 @@ defmodule SSHTest.RunOptionsTest do
   import ExUnit.CaptureIO
 
   describe "when executing SSH.run!/3" do
-    @tag :one
     test "we can send standard out to the console" do
       test_pid = self()
       assert "foo" <> _ = capture_io(fn ->
@@ -16,7 +15,6 @@ defmodule SSHTest.RunOptionsTest do
       assert_receive {:result, ""}
     end
 
-    @tag :one
     test "standard error defaults to the stderr" do
       test_pid = self()
       assert "foo" <> _ = capture_io(:stderr, fn ->

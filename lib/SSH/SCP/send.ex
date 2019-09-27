@@ -1,72 +1,77 @@
 defmodule SSH.SCP.Send do
-  @moduledoc false
-
-  # this library defines the SCP "send" protocol, in terms of a SSH-stream module.
+  @moduledoc """
+  implements the data transactions involved in a SCP file transfer to the
+  destination server.
+  """
 
   require Logger
 
   @behaviour SSH.ModuleApi
 
-  @type acc :: String.t | iodata | :finished
-
   @impl true
   @spec init(SSH.Stream.t, {Path.t, String.t | iodata, integer}) ::
-    {:ok, acc} | {:error, String.t}
-  def init(_, {filename, content, perms}) do
+    {:ok, SSH.Stream.t} | {:error, String.t}
+  def init(stream, {filename, content, perms}) do
     size = find_size(content)
     # in order to kick off the SCP routine, we need to send the commence SCP
     # signal to the current process' message mailbox.
-    send(self(), {:ssh_send, "C0#{Integer.to_string(perms, 8)} #{size} #{filename}\n"})
-    {:ok, content}
+    SSH.Stream.send_data(stream,
+      "C0#{Integer.to_string(perms, 8)} #{size} #{filename}\n")
+    {:ok, %{stream | data: content}}
   end
 
   @impl true
-  @spec stdout(term, acc) :: {[term], acc}
-  def stdout(<<0>>, content) when is_binary(content) or is_list(content) do
-    send(self(), {:ssh_send, content})
-    {[], :finished}
+  @spec stdout(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  def stdout(<<0>>, stream = %{data: content})
+        when is_binary(content) or is_list(content) do
+    SSH.Stream.send_data(stream, content)
+    {[], %{stream | data: :finished}}
   end
-  def stdout(<<0>>, :finished) do
-    send(self(), :ssh_eof)
-    {[], :finished}
+  def stdout(<<0>>, stream = %{data: :finished}) do
+    SSH.Stream.send_eof(stream)
+    {[], %{stream | data: :finished}}
   end
-  def stdout(<<0>> <> rest, any) do
-    stdout(rest, any)
+  def stdout(<<0>> <> rest, stream) do
+    stdout(rest, stream)
   end
-  def stdout(<<1, error::binary>>, _) do
-    send(self(), :ssh_eof)
+  def stdout(<<1, error::binary>>, stream) do
+    SSH.Stream.send_eof(stream)
     Logger.error("error: #{error}")
-    {[error: error], :finished}
+    {[error: error], %{stream | data: :finished}}
   end
-  def stdout(<<2, error::binary>>, _) do
+  def stdout(<<2, error::binary>>, stream) do
     # apparently OpenSSH "never sends" fatal error packets.  Just in case the
     # specs change, or client is connecting into a differnt SSH server,
     # we should handle this condition
-    send(self(), :ssh_eof)
+    SSH.Stream.send_eof(stream)
     emsg = "fatal error: #{error}"
     Logger.error(emsg)
     # go ahead and crash the process when this happens
     raise SSH.SCP.FatalError, message: emsg
   end
+  def stdout("", stream) do
+    SSH.Stream.send_data(stream, <<0>>)
+    {[], stream}
+  end
 
   @impl true
-  @spec stderr(term, acc) :: {[term], acc}
-  def stderr(string, acc), do: {[stderr: string], acc}
+  @spec stderr(term, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  def stderr(string, stream), do: {[stderr: string], stream}
 
   @impl true
-  @spec packet_timeout(acc) :: acc
-  def packet_timeout(acc) do
-    send(self(), {:ssh_send, <<0>>})
-    acc
+  @spec packet_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
+  def packet_timeout(stream) do
+    SSH.Stream.send_data(stream, <<0>>)
+    {[], stream}
   end
 
   defp find_size(content) when is_binary(content), do: :erlang.size(content)
   defp find_size([a | b]), do: find_size(a) + find_size(b)
 
-  def reducer(v = {:error, val}, :ok), do: v
-  def reducer({:stderr, stderr}, b) do
+  def reducer(error = {:error, _}, :ok), do: error
+  def reducer({:stderr, stderr}, acc) do
     IO.write(:stderr, stderr)
-    b
+    acc
   end
-  def reducer(a, b), do: b
+  def reducer(_, acc), do: acc
 end
