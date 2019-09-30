@@ -6,7 +6,7 @@ defmodule SSHTest.SCPTest do
   @content "foo\nbar\n"
 
   @tmp_ssh_fetch "/tmp/ssh_fetch.txt"
-
+  @tag :one
   test "we can fetch a file with scp" do
     File.write!(@tmp_ssh_fetch, @content)
 

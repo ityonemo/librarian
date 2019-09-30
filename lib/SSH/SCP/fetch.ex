@@ -21,24 +21,24 @@ defmodule SSH.SCP.Fetch do
   #TODO : work with the rest of the stuff here!
 
   @impl true
-  @spec stdout(binary, SSH.Stream.t) :: {[], SSH.Stream.t}
-  def stdout("C0" <> <<_perms :: binary-size(3)>> <> rest, stream) do
+  @spec on_stdout(binary, SSH.Stream.t) :: {[], SSH.Stream.t}
+  def on_stdout("C0" <> <<_perms :: binary-size(3)>> <> _rest, stream) do
     SSH.Stream.send_data(stream, <<0>>)
     {[], stream}
   end
-  def stdout(value, stream) do
+  def on_stdout(value, stream) do
     # store all inbound values into the stream.
     SSH.Stream.send_data(stream, <<0>>)
     {[value], stream}
   end
 
   @impl true
-  @spec stderr(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
-  def stderr(string, stream), do: {[stderr: string], stream}
+  @spec on_stderr(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  def on_stderr(string, stream), do: {[stderr: string], stream}
 
   @impl true
-  @spec packet_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
-  def packet_timeout(stream) do
+  @spec on_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
+  def on_timeout(stream) do
     SSH.Stream.send_data(stream, <<0>>)
     {[], stream}
   end

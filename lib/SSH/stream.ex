@@ -11,18 +11,17 @@ defmodule SSH.Stream do
 
   import Logger
 
-  @enforce_keys [:conn, :chan, :stop_time, :stdout, :stderr]
-  defstruct [:conn, :chan, :stop_time, :stdout, :stderr, :fds, :data,
+  @enforce_keys [:conn, :chan, :stop_time]
+  defstruct [:conn, :chan, :on_stdout, :on_stderr, :on_timeout, :stop_time, :fds, :data,
     control: false,
     halt: false,
-    packet_timeout: :infinity,
-    packet_timeout_fn: nil
+    data_timeout: :infinity,
   ]
 
   @type conn :: SSH.conn
   @type chan :: :ssh_connection.channel
   # TODO: spec out any is the same way as below:
-  @type process_fn :: (String.t -> any) | {(String.t, term -> {any, term}), term}
+  @type process_fn :: (String.t -> any) | (String.t, term -> {list, term})
 
   @type t :: %__MODULE__{
     conn: conn,
@@ -31,69 +30,80 @@ defmodule SSH.Stream do
     fds: [],
     control: boolean,
     halt: boolean,
-    stdout: process_fn,
-    stderr: process_fn,
-    packet_timeout: timeout,
-    packet_timeout_fn: (t -> {list | :halt, t}),
+    on_stdout: process_fn,
+    on_stderr: process_fn,
+    on_timeout: (t -> {list, t}),
+    data_timeout: timeout,
     data: any
   }
 
-  @spec __build__(conn, keyword) :: t
-  def __build__(conn, options \\ []) do
-    timeout = Keyword.get(options, :timeout, :infinity)
-    packet_timeout = Keyword.get(options, :packet_timeout, :infinity)
-    control = Keyword.get(options, :control, false)
-    stop_time = case timeout do
-      :infinity -> :infinity
-      delta_t when is_integer(delta_t) ->
-        DateTime.add(DateTime.utc_now, timeout, :millisecond)
-    end
-    # convert module assignments to the appropriate content
-    options! = if options[:module] do
-      {module, init_val} = options[:module]
-      Keyword.merge(options,
-        stdout: &module.stdout/2,
-        stderr: &module.stderr/2,
-        init: fn stream -> module.init(stream, init_val) end,
-        packet_timeout_fn: &module.packet_timeout/1)
-    else
-      options
+  defp module_overlay(nil), do: []
+  defp module_overlay({module, init_param}) do
+
+    case Code.ensure_loaded(module) do
+      {:module, ^module} ->
+        :ok
+      _ ->
+        raise ArgumentError, "module #{module} doesn't exist"
     end
 
-    # convert any 'file write' requests to a file descriptor
-    fds = fds_for(options!)
-    # determine the functions which will handle the conversion
-    # of inbound ssh data packets to usable forms.
-    {stdout, stderr} = processor_for(Keyword.merge(options!, fds))
-
-    # set the command.
-    cmd = if options![:cmd], do: options![:cmd], else: raise ArgumentError, "you must supply a command for SSH."
-
-    #get the packet timeout function.
-    packet_timeout_fn = options![:packet_timeout_fn]
-
-    # open a channel.
-    # TODO: do a better matching on these.
-    {:ok, chan} = :ssh_connection.session_channel(conn, timeout)
-    # TODO: better options here.
-    :success = :ssh_connection.exec(conn, chan, String.to_charlist(cmd), timeout)
-
-    {:ok, stream} = run_init(
-      options![:init],
-      %__MODULE__{
-        conn: conn, chan: chan, stop_time: stop_time,
-        stdout: stdout, stderr: stderr,
-        packet_timeout: packet_timeout,
-        packet_timeout_fn: packet_timeout_fn,
-        control: control, fds: fds})
-    stream
+    Enum.flat_map([init: 2, on_stdout: 2, on_stderr: 2, on_timeout: 1],
+      fn {fun, arity} ->
+        if function_exported?(module, fun, arity) do
+          [{fun, :erlang.make_fun(module, fun, arity)}]
+        else
+          []
+        end
+      end)
+    |> Keyword.put(:init_param, init_param)
   end
 
-  # TODO: consider punting this to a default init.
+  @spec __build__(conn, keyword) :: {:ok, t} | {:error, String.t}
+  def __build__(conn, options \\ []) do
 
-  @spec run_init(nil | (t -> {:ok, term} | {:error, any}), t) :: {:ok, t} | {:error, term}
-  defp run_init(nil, stream), do: {:ok, stream}
-  defp run_init(fun, stream), do: fun.(stream)
+    # make sure a command exists.
+    options[:cmd] || raise ArgumentError, "you must supply a command for SSH."
+
+    options = [ #default options
+      init:         &default_init/2,
+      conn_timeout: options[:timeout] || :infinity,
+      data_timeout: :infinity,
+      control:      false,      # TODO: what is this control?
+      fds:          fds_for(options),
+      on_stdout:    get_processor(options[:stdout], :stdout),
+      on_stderr:    get_processor(options[:stderr], :stderr),
+      on_timeout:   options[:on_timeout] || &default_timeout/1]
+    |> Keyword.merge(options)
+    |> Keyword.merge(module_overlay(options[:module]))
+
+    timeout = options[:conn_timeout] || :infinity
+
+    stop_time = case timeout do
+      :infinity                        -> :infinity
+      delta_t when is_integer(delta_t) ->
+        DateTime.add(DateTime.utc_now, delta_t, :millisecond)
+    end
+
+    # open a channel.
+    with {:ok, chan} <- :ssh_connection.session_channel(conn, timeout),
+         :success <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
+
+      mergeable_options = options
+      |> Keyword.take([:on_stdout, :on_stderr, :on_timeout, :control, :fds, :data_timeout])
+      |> Enum.into(%{})
+
+      options[:init].(
+        %__MODULE__{conn: conn, chan: chan, stop_time: stop_time}
+        |> Map.merge(mergeable_options),
+        options[:init_param])
+    end
+  end
+
+  # TODO: handle halts
+  # TODO: file descriptor cleanup
+
+  defp default_init(stream, _), do: {:ok, stream}
+  defp default_timeout(stream), do: {:halt, stream}
 
   @spec next_stream(t) :: {list, t}
   def next_stream(stream = %{halt: true}) do
@@ -103,7 +113,7 @@ defmodule SSH.Stream do
     connection_time_left = milliseconds_left(stream.stop_time)
 
     {timeout, timeout_mode} =
-      if connection_time_left < stream.packet_timeout do
+      if connection_time_left < stream.data_timeout do
         # if the connection is about to expire, let that be the timeout,
         # and send an overall timeout message.
         # NB: if both are infinity, this is irrelevant.
@@ -111,7 +121,7 @@ defmodule SSH.Stream do
       else
         # if the packet timeout is about to expire, punt to the packet
         # timeout handler.
-        {stream.packet_timeout, :packet}
+        {stream.data_timeout, :data}
       end
 
     receive do
@@ -126,18 +136,14 @@ defmodule SSH.Stream do
         wrong_source(stream, packet,
           "unexpected connection: #{inspect wrong_conn}")
 
-      # TODO: change it so that stream_packet_timeout_fn always has
+      # TODO: change it so that stream_data_timeout_fn always has
       # at least a null function in there.
 
       after timeout ->
         {conn, timeout, timeout_mode}
         case timeout_mode do
           :global -> {[error: :timeout], %{stream | halt: true}}
-          :packet -> if stream.packet_timeout_fn do
-            stream.packet_timeout_fn.(stream)
-          else
-            {[], stream}
-          end
+          :data -> stream.on_timeout.(stream)
         end
     end
   end
@@ -146,7 +152,7 @@ defmodule SSH.Stream do
   @doc """
   sends an iodata payload to the stdin of the ssh stream
 
-  You should use this method inside of stderr, stdout, and packet_timeout
+  You should use this method inside of stderr, stdout, and data_timeout
   functions when you're designing interactive ssh handlers.  Note that this
   function must be called from within the same process that the stream is
   running on, while the stream is running.
@@ -163,7 +169,7 @@ defmodule SSH.Stream do
   @doc """
   sends an end-of-file to the the ssh stream.
 
-  You should use this method inside of stderr, stdout, and packet_timeout
+  You should use this method inside of stderr, stdout, and data_timeout
   functions when you're designing interactive ssh handlers.  Note that this
   function must be called from within the same process that the stream is
   running on, while the stream is running.
@@ -205,11 +211,11 @@ defmodule SSH.Stream do
 
   defp process_packet(stream = %{chan: chan}, {:data, chan, 0, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    stream.stdout.(data, stream)
+    stream.on_stdout.(data, stream)
   end
   defp process_packet(stream = %{chan: chan}, {:data, chan, 1, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    stream.stderr.(data, stream)
+    stream.on_stderr.(data, stream)
   end
   defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
     {control(stream, :eof), stream}
@@ -249,11 +255,6 @@ defmodule SSH.Stream do
   ###################################################################
   ## stream data processor selection
 
-  defp processor_for(options), do: {
-    get_processor(options[:stdout], :stdout),
-    get_processor(options[:stderr], :stderr)
-  }
-
   # convert a user specified arity/1 value into an arity/2  with passthrough on value 2
   defp get_processor(fun, _) when is_function(fun, 1), do: fn val, any -> {fun.(val), any} end
   defp get_processor(fun, _) when is_function(fun, 2), do: fun
@@ -262,10 +263,10 @@ defmodule SSH.Stream do
   defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1), &2)
   defp get_processor(:raw, device), do: &{[{device, &1}], &2}
   defp get_processor(:silent, _), do: &silent/2
-  defp get_processor({:file, fd}, _), do: &silent(IO.write(fd, &1), &2)
-  # stdout defaults to send to the stream and stderr defaults to print to stderr
-  defp get_processor(_, :stdout), do: get_processor(:stream, :stdout)
-  defp get_processor(_, :stderr), do: get_processor(:stderr, :stderr)
+  defp get_processor({:file, _}, channel), do: &silent(IO.write(&2.fds[channel], &1), &2)
+  # default processors, if we take a nil in the first term.
+  defp get_processor(nil, :stdout), do: get_processor(:stream, :stdout) # send stdout to the stream.
+  defp get_processor(nil, :stderr), do: get_processor(:stderr, :stderr) # send stderr to stderr
 
   @spec silent(any, Stream.t) :: {[], Stream.t}
   defp silent(_, stream), do: {[], stream}
@@ -276,8 +277,11 @@ defmodule SSH.Stream do
   defp fds_for(options) do
     Enum.flat_map(options, fn
       {mode, {:file, path}} ->
-        {:ok, fd} = File.open(path, [:append])
-        [{mode, {:file, fd}}]
+        case File.open(path, [:append]) do
+          {:ok, fd} -> [{mode, fd}]
+          _ ->
+            raise File.Error, path: path
+        end
       _ -> []
     end)
   end
