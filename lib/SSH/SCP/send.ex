@@ -21,25 +21,25 @@ defmodule SSH.SCP.Send do
   end
 
   @impl true
-  @spec stdout(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
-  def stdout(<<0>>, stream = %{data: content})
+  @spec on_stdout(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  def on_stdout(<<0>>, stream = %{data: content})
         when is_binary(content) or is_list(content) do
     SSH.Stream.send_data(stream, content)
     {[], %{stream | data: :finished}}
   end
-  def stdout(<<0>>, stream = %{data: :finished}) do
+  def on_stdout(<<0>>, stream = %{data: :finished}) do
     SSH.Stream.send_eof(stream)
     {[], %{stream | data: :finished}}
   end
-  def stdout(<<0>> <> rest, stream) do
-    stdout(rest, stream)
+  def on_stdout(<<0>> <> rest, stream) do
+    on_stdout(rest, stream)
   end
-  def stdout(<<1, error::binary>>, stream) do
+  def on_stdout(<<1, error::binary>>, stream) do
     SSH.Stream.send_eof(stream)
     Logger.error("error: #{error}")
     {[error: error], %{stream | data: :finished}}
   end
-  def stdout(<<2, error::binary>>, stream) do
+  def on_stdout(<<2, error::binary>>, stream) do
     # apparently OpenSSH "never sends" fatal error packets.  Just in case the
     # specs change, or client is connecting into a differnt SSH server,
     # we should handle this condition
@@ -49,18 +49,18 @@ defmodule SSH.SCP.Send do
     # go ahead and crash the process when this happens
     raise SSH.SCP.FatalError, message: emsg
   end
-  def stdout("", stream) do
+  def on_stdout("", stream) do
     SSH.Stream.send_data(stream, <<0>>)
     {[], stream}
   end
 
   @impl true
-  @spec stderr(term, SSH.Stream.t) :: {[term], SSH.Stream.t}
-  def stderr(string, stream), do: {[stderr: string], stream}
+  @spec on_stderr(term, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  def on_stderr(string, stream), do: {[stderr: string], stream}
 
   @impl true
-  @spec packet_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
-  def packet_timeout(stream) do
+  @spec on_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
+  def on_timeout(stream) do
     SSH.Stream.send_data(stream, <<0>>)
     {[], stream}
   end

@@ -38,7 +38,7 @@ defmodule SSH.ModuleApi do
   `SSH.Stream.send_data/2` or `SSH.Stream.send_eof/1` functions within
   your implementations.
   """
-  @callback stdout(stream_data::binary, SSH.Stream.t) ::
+  @callback on_stdout(stream_data::binary, SSH.Stream.t) ::
     {output::[term] | :halt, SSH.Stream.t}
 
   @doc """
@@ -46,7 +46,7 @@ defmodule SSH.ModuleApi do
 
   See `c:stdout/2`, execpt with data coming over the standard error subchannel.
   """
-  @callback stderr(stream_data::binary, SSH.Stream.t) ::
+  @callback on_stderr(stream_data::binary, SSH.Stream.t) ::
     {output::[term] | :halt, SSH.Stream.t}
 
   # TODO: consider renaming to "data timeout"
@@ -58,5 +58,5 @@ defmodule SSH.ModuleApi do
   not implement this function, the `SSH.Stream` module will pick an
   implementation that closes the connection.
   """
-  @callback packet_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
+  @callback on_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
 end

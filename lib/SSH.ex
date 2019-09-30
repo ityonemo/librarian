@@ -20,7 +20,7 @@ defmodule SSH do
 
   - `login:` username to log in.
   - `port:`  port to use to ssh, defaults to 22.
-  - `label:` see [labels](#labels)
+  - `label:` see [labels](#2-labels)
 
   and other SSH options.  Some conversions between ssh options and SSH.connect options:
 
@@ -32,7 +32,7 @@ defmodule SSH do
 
   You can label your ssh connection to provide a side-channel for
   correctly closing the connection pid.  This is most useful in
-  the context of `with` blocks.  As an example, the following
+  the context of `with/1` blocks.  As an example, the following
   code works:
 
   ```elixir
@@ -47,9 +47,10 @@ defmodule SSH do
   end
   ```
 
-  The task label may be any term except for a pid or nil, and the ssh
-  connection label is stored in the process mailbox, so the label will
-  not be valid across process boundaries.
+  Two important points:
+  - The task label may be any term except for a `pid` or `nil`
+  - The ssh connection label is stored in the process mailbox,
+    so the label will not be valid across process boundaries.
   """
   @type connect_result :: {:ok, SSH.conn} | {:error, any}
   @impl true
@@ -122,13 +123,16 @@ defmodule SSH do
   @impl true
   @spec run(conn, String.t, keyword) :: run_result
   def run(conn, cmd, options \\ []) do
+
+    # TODO: what the heck is the control option?
     options! = Keyword.put(options, :control, true)
     {cmd!, options!} = adjust_run(cmd, options!)
 
-    conn
-    |> SSH.Stream.__build__([{:cmd, cmd!} | options!])
-    |> Enum.reduce({:error, [], nil}, &consume/2)
-    |> normalize_output(options!)
+    with {:ok, stream} <- SSH.Stream.__build__(conn, [{:cmd, cmd!} | options!]) do
+      stream
+      |> Enum.reduce({:error, [], nil}, &consume/2)
+      |> normalize_output(options!)
+    end
   end
 
   def run!(conn, cmd, options \\ []) do
@@ -229,12 +233,14 @@ defmodule SSH do
     filename = Path.basename(remote_file)
     initializer = {filename, content, perms}
 
-    conn
-    |> SSH.Stream.__build__(
+    case SSH.Stream.__build__(conn,
         cmd: "scp -t #{remote_file}",
         module: {Send, initializer},
-        packet_timeout: 500)
-    |> Enum.reduce(:ok, &Send.reducer/2)
+        data_timeout: 500) do
+      {:ok, stream} ->
+        Enum.reduce(stream, :ok, &Send.reducer/2)
+      error -> error
+    end
   end
 
   @spec send!(conn, iodata, Path.t) :: :ok | no_return
@@ -278,24 +284,40 @@ defmodule SSH do
   @impl true
   @spec fetch(conn, Path.t, keyword) :: fetch_result
   def fetch(conn, remote_file, _options \\ []) do
-    binary_result = conn
-    |> SSH.Stream.__build__(cmd: "scp -f #{remote_file}",
-                      module: {Fetch, :ok},
-                      packet_timeout: 500)
-    |> Enum.reduce(:ok, &Fetch.reducer/2)
+    with {:ok, stream} <- SSH.Stream.__build__(conn,
+                            cmd: "scp -f #{remote_file}",
+                            module: {Fetch, :ok},
+                            data_timeout: 500) do
+      Enum.reduce(stream, :ok, &Fetch.reducer/2)
+    end
   end
 
   def fetch!(conn, remote_file, options \\ []) do
     case fetch(conn, remote_file, options) do
       {:ok, result} -> result
       # TODO: better raise result below.
-      _ -> throw "oops"
+      _ -> raise "oops"
     end
   end
 
-  @spec stream!(conn, String.t, keyword) :: SSH.Stream.t
-  def stream!(conn, cmd, options \\ []) do
+  @doc """
+  creates an SSH stream struct as an ok tuple or error tuple.
+  """
+  @spec stream(conn, String.t, keyword) :: {:ok, SSH.Stream.t} | {:error, String.t}
+  def stream(conn, cmd, options \\ []) do
     SSH.Stream.__build__(conn, [{:cmd, cmd} | options])
+  end
+
+  @doc """
+  like `stream/2`, except raises on an error instead of an error tuple.
+  """
+  @spec stream!(conn, String.t, keyword) :: SSH.Stream.t | no_return
+  def stream!(conn, cmd, options \\ []) do
+    case stream(conn, cmd, options) do
+      {:ok, stream} -> stream
+      {:error, error} ->
+        raise SSH.StreamError, message: "error creating ssh stream: #{error}"
+    end
   end
 
   @doc """
@@ -315,4 +337,8 @@ defmodule SSH do
     end
   end
 
+end
+
+defmodule SSH.StreamError do
+  defexception [:message]
 end
