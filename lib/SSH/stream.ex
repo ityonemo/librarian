@@ -17,14 +17,12 @@ defmodule SSH.Stream do
     data_timeout: :infinity,
   ]
 
-  @type conn :: SSH.conn
-  @type chan :: :ssh_connection.channel
   # TODO: spec out any is the same way as below:
   @type process_fn :: (String.t -> any) | (String.t, term -> {list, term})
 
   @type t :: %__MODULE__{
-    conn: conn,
-    chan: chan,
+    conn: SSH.conn,
+    chan: SSH.chan,
     stop_time: DateTime.t,
     fds: [],
     stream_control_messages: boolean,
@@ -57,7 +55,7 @@ defmodule SSH.Stream do
     |> Keyword.put(:init_param, init_param)
   end
 
-  @spec __build__(conn, keyword) :: {:ok, t} | {:error, String.t}
+  @spec __build__(SSH.conn, keyword) :: {:ok, t} | {:error, String.t}
   def __build__(conn, options \\ []) do
 
     # make sure a command exists.
@@ -293,7 +291,7 @@ defmodule SSH.Stream do
   defp get_processor(nil, :stdout), do: get_processor(:stream, :stdout) # send stdout to the stream.
   defp get_processor(nil, :stderr), do: get_processor(:stderr, :stderr) # send stderr to stderr
 
-  @spec silent(any, Stream.t) :: {[], Stream.t}
+  @spec silent(any, SSH.Stream.t) :: {[], SSH.Stream.t}
   defp silent(_, stream), do: {[], stream}
 
   ###################################################################

@@ -12,7 +12,7 @@ defmodule SSH.ModuleApi do
   @doc """
   initializes your SSH stream.
 
-  A return value of `{:ok, acc}` means that any preconditions for the
+  A return value of `{:ok, stream}` means that any preconditions for the
   stream have been successfully completed.  You should return the initialized
   accumulator as the second part of the tuple.  A return value of `{:error, any}`
   indicates an error in initialization, and the SSH channel will not be created.

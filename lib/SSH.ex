@@ -1,5 +1,56 @@
 defmodule SSH do
   @moduledoc """
+
+  SSH streams and SSH and basic SCP functionality
+
+  The librarian SSH module provides SSH streams (see `stream/3`) and
+  three protocols over the SSH stream:
+
+  - `run/3`, which runs a command on the remote SSH host.
+  - `fetch/3`, which uses the SCP protocol to obtain a remote file,
+  - `send/4`, which uses the SCP protocol to send a file to the remote host.
+
+  Note that not all SSH hosts (for example, embedded shells), implement an
+  SCP command, so you may not necessarily be able to perform SCP over your
+  SSH stream.
+
+  ## Using SSH
+
+  The principles of this library are simple.  You will first want to create
+  an SSH connection using the `connect/2` function.  There you will provide
+  credentials (or let the system figure out the default credentials).  The
+  returned `conn` term can then be passed to the multiple utilities.
+
+  ```elixir
+  {:ok, conn} = SSH.connect("some.other.server")
+  SSH.run!(conn, "echo hello ssh")  # ==> "hello ssh"
+  ```
+
+  ## Mocking
+
+  There's a good chance you'll want to mock your SSH commands and responses.
+  The `SSH.Api` behaviour module is provided for that purpose.
+
+  ## Logging
+
+  The SSH and related modules interface with Elixir (and Erlang's) logging
+  facility.  The default metadata tagged on the message is `ssh: true`; if
+  you would like to set it otherwise you can set the `:librarian, :ssh_metadata`
+  application environment variable.
+
+  ## Customization
+
+  If you would like to write your own SSH stream handlers that plug in to
+  the SSH stream and provide either rudimentary interactivity or early stream
+  token processing, you may want to consider implementing a module following
+  the `SSH.ModuleApi` behaviour, and initiating your stream as desired.
+
+  ## Limitations
+
+  This library has largely been tested against Linux SSH clients.  Not all
+  SSH schemes are amenable to stream processing.  In those cases you should
+  implement an ssh client gen_server using erlang's ssh_client, though
+  support for this in elixir is planned in the near-term.
   """
 
   @behaviour SSH.Api
@@ -9,9 +60,26 @@ defmodule SSH do
 
   require Logger
 
+  #############################################################################
+  ## generally useful types
+
+  @typedoc "erlang ip4 format, `{byte, byte, byte, byte}`"
   @type ip4 :: :inet.ip4_address
+
+  @typedoc "connect to a remote is specified using either a domain name or an ip address"
   @type remote :: String.t | charlist | ip4
+
+  @typedoc "connection reference for the SSH and SCP operations"
   @type conn :: :ssh.connection_ref
+
+  @typedoc "channel reference for the SSH and SCP operations"
+  @type chan :: :ssh.channel_id
+
+  #############################################################################
+  ## connection and stream handling
+
+  @typedoc false
+  @type connect_result :: {:ok, SSH.conn} | {:error, any}
 
   @doc """
   initiates an ssh connection with a remote server.
@@ -20,13 +88,14 @@ defmodule SSH do
 
   - `login:` username to log in.
   - `port:`  port to use to ssh, defaults to 22.
-  - `label:` see [labels](#2-labels)
+  - `label:` see [labels](#connect/2-labels)
 
-  and other SSH options.  Some conversions between ssh options and SSH.connect options:
+  and other SSH options.  Some conversions between ssh options and SSH.connect
+  options:
 
-  ssh commandline option    | SSH library option
-  --- | ---
-  `-o NoStrictHostChecking` | `silently_accept_hosts: true`
+  | ssh commandline option    | SSH library option            |
+  | ------------------------- | ----------------------------- |
+  | `-o NoStrictHostChecking` | `silently_accept_hosts: true` |
 
   ### labels:
 
@@ -47,13 +116,13 @@ defmodule SSH do
   end
   ```
 
-  Two important points:
-  - The task label may be any term except for a `pid` or `nil`
-  - The ssh connection label is stored in the process mailbox,
-    so the label will not be valid across process boundaries.
+  Some important points:
+  - The connection label may be any term except for a `pid` or `nil`
+  - If you are wrangling multiple SSH sessions, please use unique connection
+    labels.
+  - The ssh connection label is stored in the process mailbox, so the label
+    will not be valid across process boundaries.
   """
-  @type connect_result :: {:ok, SSH.conn} | {:error, any}
-
   @impl true
   @spec connect(remote, keyword) :: connect_result
   def connect(remote, options \\ [])
@@ -104,7 +173,7 @@ defmodule SSH do
   defp normalize(charlist) when is_list(charlist), do: [user: charlist]
 
   @doc """
-  see `connect/2` but raises with a ConnectionError instead of emitting an error tuple.
+  like `connect/2` but raises with a ConnectionError instead of emitting an error tuple.
   """
   @impl true
   @spec connect!(remote, keyword) :: conn | no_return
@@ -116,15 +185,65 @@ defmodule SSH do
     end
   end
 
+  @doc """
+  creates an SSH stream struct as an ok tuple or error tuple.
+  """
+  @spec stream(conn, String.t, keyword) :: {:ok, SSH.Stream.t} | {:error, String.t}
+  def stream(conn, cmd, options \\ []) do
+    SSH.Stream.__build__(conn, [{:cmd, cmd} | options])
+  end
+
+  @doc """
+  like `stream/2`, except raises on an error instead of an error tuple.
+  """
+  @spec stream!(conn, String.t, keyword) :: SSH.Stream.t | no_return
+  def stream!(conn, cmd, options \\ []) do
+    case stream(conn, cmd, options) do
+      {:ok, stream} -> stream
+      {:error, error} ->
+        raise SSH.StreamError, message: "error creating ssh stream: #{error}"
+    end
+  end
+
+  @doc """
+  closes the ssh connection.
+
+  Typically you will pass the connection object to this function.  If your
+  connection is contained to its own transient task process, you may not need
+  to call this function as the ssh client library will detect that the process
+  has ended and clean up after you.
+
+  In some cases, you may want to be able to close a connection out-of-band.
+  In this case, you may label your connection and use the label to perform
+  the close operation.  See [labels](#connect/2-labels)
+  """
+  @impl true
+  @spec close(conn | term) :: :ok | {:error, String.t}
+  def close(conn) when is_pid(conn), do: :ssh.close(conn)
+  def close(label) do
+    receive do
+      {:"$ssh", ^label, pid} ->
+        :ssh.close(pid)
+      after 0 ->
+        {:error, "ssh connection with label #{label} not found"}
+    end
+  end
+
   #############################################################################
   ## SSH MODE: running
 
+  @typedoc "unix-style return codes for ssh-executed functions"
   @type retval :: 0..255
+
+  @typedoc false
   @type run_content :: iodata | {String.t, String.t}
+
+  @typedoc false
+  @type run_result :: {:ok, run_content, retval} | {:error, term}
+
   @doc """
   some documentation about the "run" command
   """
-  @type run_result :: {:ok, run_content, retval} | {:error, term}
   @impl true
   @spec run(conn, String.t, keyword) :: run_result
   def run(conn, cmd, options \\ []) do
@@ -205,7 +324,9 @@ defmodule SSH do
   ## SCP MODE: sending
 
   # TODO: make this work with iodata
+  # TODO: check that the permissions part is OK.
 
+  @typedoc false
   @type send_result :: :ok | {:error, term}
 
   @doc """
@@ -258,12 +379,15 @@ defmodule SSH do
     case send(conn, content, remote_file, options) do
       :ok -> :ok
       {:error, message} ->
-        raise "error executing SCP send: #{message}"
+        raise SSH.SCP.Error, "error executing SCP send: #{message}"
     end
   end
 
   #############################################################################
   ## SCP MODE: fetching
+
+  @typedoc false
+  @type fetch_result :: {:ok, binary} | {:error, term}
 
   @doc """
   retrieves a binary file from the remote host.
@@ -288,7 +412,6 @@ defmodule SSH do
   SSH.fetch(conn, "path/to/desired/file")
   ```
   """
-  @type fetch_result :: {:ok, binary} | {:error, term}
   @impl true
   @spec fetch(conn, Path.t, keyword) :: fetch_result
   def fetch(conn, remote_file, _options \\ []) do
@@ -309,44 +432,7 @@ defmodule SSH do
     case fetch(conn, remote_file, options) do
       {:ok, result} -> result
       {:error, message} ->
-        raise "error executing SCP send: #{message}"
-    end
-  end
-
-  @doc """
-  creates an SSH stream struct as an ok tuple or error tuple.
-  """
-  @spec stream(conn, String.t, keyword) :: {:ok, SSH.Stream.t} | {:error, String.t}
-  def stream(conn, cmd, options \\ []) do
-    SSH.Stream.__build__(conn, [{:cmd, cmd} | options])
-  end
-
-  @doc """
-  like `stream/2`, except raises on an error instead of an error tuple.
-  """
-  @spec stream!(conn, String.t, keyword) :: SSH.Stream.t | no_return
-  def stream!(conn, cmd, options \\ []) do
-    case stream(conn, cmd, options) do
-      {:ok, stream} -> stream
-      {:error, error} ->
-        raise SSH.StreamError, message: "error creating ssh stream: #{error}"
-    end
-  end
-
-  @doc """
-  closes the ssh connection.
-
-  you may also close a ssh connection that has been labeled with an atom.
-  """
-  @impl true
-  @spec close(conn | term) :: :ok | {:error, String.t}
-  def close(conn) when is_pid(conn), do: :ssh.close(conn)
-  def close(label) do
-    receive do
-      {:"$ssh", ^label, pid} ->
-        :ssh.close(pid)
-      after 0 ->
-        {:error, "ssh connection with label #{label} not found"}
+        raise SSH.SCP.Error, "error executing SCP send: #{message}"
     end
   end
 

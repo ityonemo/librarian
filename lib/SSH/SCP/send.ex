@@ -2,25 +2,58 @@ defmodule SSH.SCP.Send do
   @moduledoc """
   implements the data transactions involved in a SCP file transfer to the
   destination server.
+
+  Concretely, the following functions are implemented:
+  - `init/2`, for `c:SSH.ModuleApi.init/2`
+  - `on_stdout/2`, for `c:SSH.ModuleApi.on_stdout/2`
+  - `on_stderr/2`, for `c:SSH.ModuleApi.on_stderr/2`
   """
 
   require Logger
-  @logger_metadata [scp: true]
+  @logger_metadata Application.get_env(:librarian, :scp_metadata, [scp: true])
 
   @behaviour SSH.ModuleApi
 
+  @doc """
+  initializes the sending procedure for SCP.
+
+  Expects the following information:
+  - the initialized SSH Stream.  This will be modified to include our payload.
+  - a triple of: `{remote_filepath, data_content, permissions}`  Permissions should
+    be standard unix permissions scheme, for example `0o644` gives read and write
+    permissions for the owner, and read permissions for everyone else, or `0o400`
+    makes it read-only and only readable to the owner.
+
+  The following tasks are performed:
+  - As per the SCP protocol, send the control command: `C0<permissions> <size>
+    <remote_filepath>\n`.
+  - stash the content in the `:data` field of the stream.
+
+  """
   @impl true
-  @spec init(SSH.Stream.t, {Path.t, String.t | iodata, integer}) ::
-    {:ok, SSH.Stream.t} | {:error, String.t}
-  def init(stream, {filename, content, perms}) do
+  @spec init(SSH.Stream.t, {Path.t, String.t | iodata, integer}) :: {:ok, SSH.Stream.t}
+  def init(stream, {filepath, content, perms}) do
     size = find_size(content)
     # in order to kick off the SCP routine, we need to send the commence SCP
     # signal to the current process' message mailbox.
     SSH.Stream.send_data(stream,
-      "C0#{Integer.to_string(perms, 8)} #{size} #{filename}\n")
-    {:ok, %{stream | data: content}}
+      "C0#{Integer.to_string(perms, 8)} #{size} #{filepath}\n")
+    {:ok, %SSH.Stream{stream | data: content}}
   end
 
+  @doc """
+  responds to information returned on the `stdout` channel
+  by the `scp -t` command.
+
+  As per the protocol the following binary responses can be expected:
+
+  - `<<0>>`: connection acknowledged, send data.
+  - `<<0>>`: data packet receieved, send more data.
+  - `<<1, error_string>>`: some error has occurred.
+  - `<<2, error_string>>`: some fatal error has occurred.
+
+
+  """
   @impl true
   @spec on_stdout(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
   def on_stdout(<<0>>, stream = %{data: content})
