@@ -49,8 +49,6 @@ defmodule SSH.ModuleApi do
   @callback on_stderr(stream_data::binary, SSH.Stream.t) ::
     {output::[term] | :halt, SSH.Stream.t}
 
-  # TODO: consider renaming to "data timeout"
-
   @doc """
   responds to when it takes too long for the other side to respond with data.
 

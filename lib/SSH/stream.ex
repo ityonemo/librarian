@@ -7,13 +7,12 @@ defmodule SSH.Stream do
   time you use it, the contents returned are likely to be different.
   """
 
-  # TODO: marshal the processing functions into arity/2 functions always.
-
-  import Logger
+  require Logger
+  @logger_metadata Application.get_env(:librarian, :ssh_metadata, [ssh: true])
 
   @enforce_keys [:conn, :chan, :stop_time]
   defstruct [:conn, :chan, :on_stdout, :on_stderr, :on_timeout, :stop_time, :fds, :data,
-    control: false,
+    stream_control_messages: false,
     halt: false,
     data_timeout: :infinity,
   ]
@@ -28,7 +27,7 @@ defmodule SSH.Stream do
     chan: chan,
     stop_time: DateTime.t,
     fds: [],
-    control: boolean,
+    stream_control_messages: boolean,
     halt: boolean,
     on_stdout: process_fn,
     on_stderr: process_fn,
@@ -65,14 +64,14 @@ defmodule SSH.Stream do
     options[:cmd] || raise ArgumentError, "you must supply a command for SSH."
 
     options = [ #default options
-      init:         &default_init/2,
-      conn_timeout: options[:timeout] || :infinity,
-      data_timeout: :infinity,
-      control:      false,      # TODO: what is this control?
-      fds:          fds_for(options),
-      on_stdout:    get_processor(options[:stdout], :stdout),
-      on_stderr:    get_processor(options[:stderr], :stderr),
-      on_timeout:   options[:on_timeout] || &default_timeout/1]
+      init:                    &default_init/2,
+      conn_timeout:            options[:timeout] || :infinity,
+      data_timeout:            :infinity,
+      stream_control_messages: false,
+      fds:                     fds_for(options),
+      on_stdout:               get_processor(options[:stdout], :stdout),
+      on_stderr:               get_processor(options[:stderr], :stderr),
+      on_timeout:              options[:on_timeout] || &default_timeout/1]
     |> Keyword.merge(options)
     |> Keyword.merge(module_overlay(options[:module]))
 
@@ -89,7 +88,7 @@ defmodule SSH.Stream do
          :success <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
 
       mergeable_options = options
-      |> Keyword.take([:on_stdout, :on_stderr, :on_timeout, :control, :fds, :data_timeout])
+      |> Keyword.take([:on_stdout, :on_stderr, :on_timeout, :stream_control_messages, :fds, :data_timeout])
       |> Enum.into(%{})
 
       options[:init].(
@@ -100,7 +99,6 @@ defmodule SSH.Stream do
   end
 
   # TODO: handle halts
-  # TODO: file descriptor cleanup
 
   defp default_init(stream, _), do: {:ok, stream}
   defp default_timeout(stream), do: {:halt, stream}
@@ -128,7 +126,7 @@ defmodule SSH.Stream do
       # a ssh "packet" should arrive as a message to this process since it has
       # been registered with the :ssh module subsystem.
       {:ssh_cm, ^conn, packet} ->
-        process_packet(stream, packet)
+        process_message(stream, packet)
 
       # if the chan and conn values don't match, then we should drop the packet
       # and issue a warning.
@@ -188,7 +186,6 @@ defmodule SSH.Stream do
     if time > 0, do: time, else: 0
   end
 
-  # TODO: this is really hacky.  Please review.
   defp drain(stream = %{conn: conn, chan: chan}) do
     # drain the last packets.
     receive do
@@ -202,53 +199,81 @@ defmodule SSH.Stream do
         stream
     end
   end
+
+  @spec last_stream(t) :: :ok
   def last_stream(stream) do
     drain(stream)
+
+    # close out our file descriptors
+    if stream.fds do
+      Enum.each(stream.fds, fn {_, fd} -> File.close(fd) end)
+    end
+
+    # close out the ssh connection
     :ssh_connection.close(stream.conn, stream.chan)
   end
 
-  # TODO: rename "process packet" to "process message"
+  @typedoc "binary data sent over the server's standard out (0) or standard error (1)"
+  @type iostream_message :: {:data, SSH.chan, 0 | 1, binary}
 
-  defp process_packet(stream = %{chan: chan}, {:data, chan, 0, data}) do
+  @typedoc "ssh protocol stream control messages"
+  @type control_message :: {:eof, SSH.chan} | {:exit_status, SSH.chan, integer} | {:closed, SSH.chan}
+
+  @typedoc "messages that the local client can use to send streaming content"
+  @type outbound_message :: {:send, SSH.chan, binary} | {:send_eof, SSH.chan}
+
+  @typedoc """
+  all messages that are blocked by the stream control loop.
+
+  Note that most of these are the third term in a `{:ssh_cm, conn, <message>}` tuple.
+  """
+  @type ssh_message :: iostream_message | control_message | outbound_message
+
+  @typedoc "the default tokens that can be sent for stream processing"
+  @type stream_tokens :: :eof | {:stdout, binary} | {:stderr, binary} | {:stream, binary} | {:retval, integer} | :halt
+
+  @spec process_message(t, ssh_message) :: {[term], t}
+  defp process_message(stream = %{chan: chan}, {:data, chan, 0, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
     stream.on_stdout.(data, stream)
   end
-  defp process_packet(stream = %{chan: chan}, {:data, chan, 1, data}) do
+  defp process_message(stream = %{chan: chan}, {:data, chan, 1, data}) do
     :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
     stream.on_stderr.(data, stream)
   end
-  defp process_packet(stream = %{chan: chan}, {:eof, chan}) do
-    {control(stream, :eof), stream}
+  defp process_message(stream = %{chan: chan}, {:eof, chan}) do
+    {filter_control_messages(stream, :eof), stream}
   end
-  defp process_packet(stream, {:eof, _}) do
+  defp process_message(stream, {:eof, _}) do
     {[], stream}
   end
-  defp process_packet(stream = %{chan: chan}, {:exit_status, chan, status}) do
-    {control(stream, {:retval, status}), stream}
+  defp process_message(stream = %{chan: chan}, {:exit_status, chan, status}) do
+    {filter_control_messages(stream, {:retval, status}), stream}
   end
-  defp process_packet(stream = %{chan: chan}, {:closed, chan}) do
+  defp process_message(stream = %{chan: chan}, {:closed, chan}) do
     {:halt, stream}
   end
-  defp process_packet(stream = %{chan: chan}, {:send, chan, payload}) do
+  defp process_message(stream = %{chan: chan}, {:send, chan, payload}) do
     # TODO: figure out error handling here.
     :ssh_connection.send(stream.conn, stream.chan, payload)
     {[], stream}
   end
-  defp process_packet(stream = %{chan: chan}, {:send_eof, chan}) do
+  defp process_message(stream = %{chan: chan}, {:send_eof, chan}) do
     # TODO: figure out what to do with this.
     :ssh_connection.send_eof(stream.conn, stream.chan)
     {[], stream}
   end
-  defp process_packet(stream, packet) when is_tuple(packet) do
+  defp process_message(stream, packet) when is_tuple(packet) do
     wrong_source(stream, packet, "unexpected channel: #{elem packet, 1}")
   end
 
-  defp control(%{control: true}, v), do: [v]
-  defp control(_, _v), do: []
+  # TODO: do a better job of describing term below:
+  @spec filter_control_messages(t, term) :: [term]
+  defp filter_control_messages(%{stream_control_messages: true}, v), do: [v]
+  defp filter_control_messages(_, _v), do: []
 
-  #TODO: tag log messages with SSH metadata.
   defp wrong_source(stream, packet, msg) do
-    Logger.warn("ssh packet of type #{elem packet, 0} received from #{msg}")
+    Logger.warn("ssh packet of type #{elem packet, 0} received from #{msg}", @logger_metadata)
     {[], stream}
   end
 

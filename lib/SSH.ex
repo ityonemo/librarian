@@ -53,6 +53,7 @@ defmodule SSH do
     so the label will not be valid across process boundaries.
   """
   @type connect_result :: {:ok, SSH.conn} | {:error, any}
+
   @impl true
   @spec connect(remote, keyword) :: connect_result
   def connect(remote, options \\ [])
@@ -105,13 +106,14 @@ defmodule SSH do
   @doc """
   see `connect/2` but raises with a ConnectionError instead of emitting an error tuple.
   """
+  @impl true
   @spec connect!(remote, keyword) :: conn | no_return
   def connect!(remote, options \\ []) do
-    {:ok, conn} = connect(remote, options)
-    conn
-  rescue
-    _ in MatchError ->
-      reraise SSH.ConnectionError, "error connecting to #{remote}"
+    case connect(remote, options) do
+      {:ok, conn} -> conn
+      {:error, message} ->
+        raise SSH.ConnectionError, "error connecting to #{remote}: #{message}"
+    end
   end
 
   @type retval :: 0..255
@@ -123,9 +125,7 @@ defmodule SSH do
   @impl true
   @spec run(conn, String.t, keyword) :: run_result
   def run(conn, cmd, options \\ []) do
-
-    # TODO: what the heck is the control option?
-    options! = Keyword.put(options, :control, true)
+    options! = Keyword.put(options, :stream_control_messages, true)
     {cmd!, options!} = adjust_run(cmd, options!)
 
     with {:ok, stream} <- SSH.Stream.__build__(conn, [{:cmd, cmd!} | options!]) do
@@ -135,6 +135,8 @@ defmodule SSH do
     end
   end
 
+  @impl true
+  @spec run!(conn, String.t, keyword) :: run_content | no_return
   def run!(conn, cmd, options \\ []) do
     case run(conn, cmd, options) do
       {:ok, result, 0} -> result
@@ -243,6 +245,10 @@ defmodule SSH do
     end
   end
 
+  @doc """
+  like `send/4`, except raises on errors, instead of returning an error tuple.
+  """
+  @impl true
   @spec send!(conn, iodata, Path.t) :: :ok | no_return
   @spec send!(conn, iodata, Path.t, keyword) :: :ok | no_return
   def send!(conn, content, remote_file, options \\ []) do
@@ -279,7 +285,6 @@ defmodule SSH do
   SSH.fetch(conn, "path/to/desired/file")
   ```
   """
-
   @type fetch_result :: {:ok, binary} | {:error, term}
   @impl true
   @spec fetch(conn, Path.t, keyword) :: fetch_result
@@ -292,11 +297,16 @@ defmodule SSH do
     end
   end
 
+  @doc """
+  like `fetch/3` except raises instead of emitting an error tuple.
+  """
+  @impl true
+  @spec fetch!(conn, Path.t, keyword) :: binary | no_return
   def fetch!(conn, remote_file, options \\ []) do
     case fetch(conn, remote_file, options) do
       {:ok, result} -> result
-      # TODO: better raise result below.
-      _ -> raise "oops"
+      {:error, message} ->
+        raise "error executing SCP send: #{message}"
     end
   end
 

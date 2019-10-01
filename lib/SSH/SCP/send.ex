@@ -5,6 +5,7 @@ defmodule SSH.SCP.Send do
   """
 
   require Logger
+  @logger_metadata [scp: true]
 
   @behaviour SSH.ModuleApi
 
@@ -36,7 +37,7 @@ defmodule SSH.SCP.Send do
   end
   def on_stdout(<<1, error::binary>>, stream) do
     SSH.Stream.send_eof(stream)
-    Logger.error("error: #{error}")
+    Logger.error("error: #{error}", @logger_metadata)
     {[error: error], %{stream | data: :finished}}
   end
   def on_stdout(<<2, error::binary>>, stream) do
@@ -45,7 +46,7 @@ defmodule SSH.SCP.Send do
     # we should handle this condition
     SSH.Stream.send_eof(stream)
     emsg = "fatal error: #{error}"
-    Logger.error(emsg)
+    Logger.error(emsg, @logger_metadata)
     # go ahead and crash the process when this happens
     raise SSH.SCP.FatalError, message: emsg
   end
