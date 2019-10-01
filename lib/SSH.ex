@@ -116,6 +116,9 @@ defmodule SSH do
     end
   end
 
+  #############################################################################
+  ## SSH MODE: running
+
   @type retval :: 0..255
   @type run_content :: iodata | {String.t, String.t}
   @doc """

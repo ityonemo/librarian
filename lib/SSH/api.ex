@@ -11,8 +11,8 @@ defmodule SSH.Api do
   @callback connect(SSH.remote, keyword) :: SSH.connect_result
   @callback connect(SSH.remote) :: SSH.connect_result
 
-  @callback connect!(SSH.remote, keyword) :: :ok | no_return
-  @callback connect!(SSH.remote) :: :ok | no_return
+  @callback connect!(SSH.remote, keyword) :: SSH.conn | no_return
+  @callback connect!(SSH.remote) :: SSH.conn | no_return
 
   @callback run(SSH.conn, String.t, keyword) :: SSH.run_result
   @callback run(SSH.conn, String.t) :: SSH.run_result
