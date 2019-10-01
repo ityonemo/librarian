@@ -34,4 +34,11 @@ defmodule SSH.Api do
 
   @callback close(term) :: :ok | {:error, String.t}
 
+  @optional_callbacks [
+    connect: 1, connect!: 2, connect!: 1,
+    run: 2, run!: 3, run!: 2,
+    fetch: 2, fetch!: 3, fetch!: 2,
+    send: 3, send!: 4, send!: 3
+  ]
+
 end

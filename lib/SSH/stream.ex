@@ -1,7 +1,9 @@
 defmodule SSH.Stream do
 
   @moduledoc """
-  Defines an `SSH.Stream` struct returned by `SSH.stream!/3`
+  Defines an `SSH.Stream` struct returned by `SSH.stream!/3`, as well
+  as key functions that are involved in accessing the ssh data from
+  the stream struct.
 
   Like `IO.Stream`, an SSH stream has side effects.  Any given
   time you use it, the contents returned are likely to be different.
@@ -17,9 +19,10 @@ defmodule SSH.Stream do
     data_timeout: :infinity,
   ]
 
-  # TODO: spec out any is the same way as below:
-  @type process_fn :: (String.t -> any) | (String.t, term -> {list, term})
+  @typedoc "a lambda that acts on channel data and convert it to stream tokens"
+  @type process_fn :: (binary, acc::term -> {[term], acc::term})
 
+  @typedoc "the stream data structure"
   @type t :: %__MODULE__{
     conn: SSH.conn,
     chan: SSH.chan,
@@ -33,27 +36,6 @@ defmodule SSH.Stream do
     data_timeout: timeout,
     data: any
   }
-
-  defp module_overlay(nil), do: []
-  defp module_overlay({module, init_param}) do
-
-    case Code.ensure_loaded(module) do
-      {:module, ^module} ->
-        :ok
-      _ ->
-        raise ArgumentError, "module #{module} doesn't exist"
-    end
-
-    Enum.flat_map([init: 2, on_stdout: 2, on_stderr: 2, on_timeout: 1],
-      fn {fun, arity} ->
-        if function_exported?(module, fun, arity) do
-          [{fun, :erlang.make_fun(module, fun, arity)}]
-        else
-          []
-        end
-      end)
-    |> Keyword.put(:init_param, init_param)
-  end
 
   @spec __build__(SSH.conn, keyword) :: {:ok, t} | {:error, String.t}
   def __build__(conn, options \\ []) do
@@ -96,11 +78,76 @@ defmodule SSH.Stream do
     end
   end
 
-  # TODO: handle halts
+  #################################################################
+  ## initialization: handler lambda selection
 
   defp default_init(stream, _), do: {:ok, stream}
   defp default_timeout(stream), do: {:halt, stream}
 
+  @typep processor_spec ::
+    (binary -> term) |
+    (binary, term -> {[term], term}) |
+    :stream | :stdout | :stderr | :raw | :silent | {:file, pid}
+
+  @spec get_processor(processor_spec, :stdout | :stderr) :: process_fn
+  # convert a user specified arity/1 value into an arity/2  with passthrough on value 2
+  defp get_processor(fun, _) when is_function(fun, 1), do: fn val, any -> {fun.(val), any} end
+  defp get_processor(fun, _) when is_function(fun, 2), do: fun
+  defp get_processor(:stream, _), do: fn value, any -> {[value], any} end
+  defp get_processor(:stdout, _), do: &silent(IO.write(&1), &2)
+  defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1), &2)
+  defp get_processor(:raw, device), do: &{[{device, &1}], &2}
+  defp get_processor(:silent, _), do: &silent/2
+  defp get_processor({:file, _}, channel), do: &silent(IO.write(&2.fds[channel], &1), &2)
+  # default processors, if we take a nil in the first term.
+  defp get_processor(nil, :stdout), do: get_processor(:stream, :stdout) # send stdout to the stream.
+  defp get_processor(nil, :stderr), do: get_processor(:stderr, :stderr) # send stderr to stderr
+
+  @spec silent(any, SSH.Stream.t) :: {[], SSH.Stream.t}
+  defp silent(_, stream), do: {[], stream}
+
+  # or, if we're using a module, use this:
+  @spec module_overlay(nil | {module, term}) :: keyword
+  defp module_overlay(nil), do: []
+  defp module_overlay({module, init_param}) do
+
+    case Code.ensure_loaded(module) do
+      {:module, ^module} ->
+        :ok
+      _ ->
+        raise ArgumentError, "module #{module} doesn't exist"
+    end
+
+    Enum.flat_map([init: 2, on_stdout: 2, on_stderr: 2, on_timeout: 1],
+      fn {fun, arity} ->
+        if function_exported?(module, fun, arity) do
+          [{fun, :erlang.make_fun(module, fun, arity)}]
+        else
+          []
+        end
+      end)
+    |> Keyword.put(:init_param, init_param)
+  end
+
+  ###################################################################
+  ## initialization: file descriptor things
+
+  defp fds_for(options) do
+    Enum.flat_map(options, fn
+      {mode, {:file, path}} ->
+        case File.open(path, [:append]) do
+          {:ok, fd} -> [{mode, fd}]
+          _ ->
+            raise File.Error, path: path
+        end
+      _ -> []
+    end)
+  end
+
+  #################################################################
+  ## stream iteration: next_stream
+
+  @doc false
   @spec next_stream(t) :: {list, t}
   def next_stream(stream = %{halt: true}) do
     {:halt, stream}
@@ -132,9 +179,6 @@ defmodule SSH.Stream do
         wrong_source(stream, packet,
           "unexpected connection: #{inspect wrong_conn}")
 
-      # TODO: change it so that stream_data_timeout_fn always has
-      # at least a null function in there.
-
       after timeout ->
         {conn, timeout, timeout_mode}
         case timeout_mode do
@@ -143,6 +187,122 @@ defmodule SSH.Stream do
         end
     end
   end
+
+  @spec milliseconds_left(:infinity | DateTime.t) :: non_neg_integer
+  defp milliseconds_left(:infinity), do: :infinity
+  defp milliseconds_left(stop_time) do
+    time = DateTime.diff(stop_time, DateTime.utc_now, :millisecond)
+    if time > 0, do: time, else: 0
+  end
+
+  @typedoc "binary data sent over the server's standard out (0) or standard error (1)"
+  @type iostream_message :: {:data, SSH.chan, 0 | 1, binary}
+
+  @typedoc "ssh protocol stream control messages"
+  @type control_message :: {:eof, SSH.chan} | {:exit_status, SSH.chan, integer} | {:closed, SSH.chan}
+
+  @typedoc "messages that the local client can use to send streaming content"
+  @type outbound_message :: {:send, SSH.chan, binary} | {:send_eof, SSH.chan}
+
+  @typedoc """
+  all messages that are blocked by the stream control loop.
+
+  Note that most of these are the third term in a `{:ssh_cm, conn, <message>}` tuple.
+  """
+  @type ssh_message :: iostream_message | control_message | outbound_message
+
+  @typedoc "the default tokens that can be sent for stream processing"
+  @type stream_control_tokens :: :eof | {:retval, integer} | :halt
+
+  @typedoc "the default tokens that can be sent for stream processing"
+  @type stream_tokens :: {:stdout, binary} | {:stderr, binary} | {:stream, binary} | stream_control_tokens
+
+  @spec process_message(t, ssh_message) :: {[term], t}
+  defp process_message(stream = %{chan: chan}, {:data, chan, 0, data}) do
+    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
+    stream.on_stdout.(data, stream)
+  end
+  defp process_message(stream = %{chan: chan}, {:data, chan, 1, data}) do
+    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
+    stream.on_stderr.(data, stream)
+  end
+  defp process_message(stream = %{chan: chan}, {:eof, chan}) do
+    {filter_control_tokens(stream, :eof), stream}
+  end
+  defp process_message(stream, {:eof, _}) do
+    {[], stream}
+  end
+  defp process_message(stream = %{chan: chan}, {:exit_status, chan, status}) do
+    {filter_control_tokens(stream, {:retval, status}), stream}
+  end
+  defp process_message(stream = %{chan: chan}, {:closed, chan}) do
+    {:halt, stream}
+  end
+  defp process_message(stream = %{chan: chan}, {:send, chan, payload}) do
+    case :ssh_connection.send(stream.conn, stream.chan, payload) do
+      :ok -> {[], stream}
+      {:error, :closed} ->
+        Logger.warn("attempted to send data to ssh channel #{stream.chan} but it was already closed", @logger_metadata)
+        {[error: "channel #{stream.chan} already closed"], stream}
+      {:error, :timeout} ->
+        Logger.warn("attempted to send data to ssh channel #{stream.chan} but it timed out", @logger_metadata)
+        {[error: "channel #{stream.chan} timed out"], stream}
+    end
+  end
+  defp process_message(stream = %{chan: chan}, {:send_eof, chan}) do
+    case :ssh_connection.send_eof(stream.conn, stream.chan) do
+      :ok -> {[], stream}
+      {:error, :closed} ->
+        Logger.warn("attempted to close ssh channel #{stream.chan} but it was already closed", @logger_metadata)
+        {[error: "channel #{stream.chan} already closed"], stream}
+    end
+  end
+  defp process_message(stream, packet) when is_tuple(packet) do
+    wrong_source(stream, packet, "unexpected channel: #{elem packet, 1}")
+  end
+
+  @spec filter_control_tokens(t, stream_control_tokens) :: [stream_control_tokens]
+  defp filter_control_tokens(%{stream_control_messages: true}, v), do: [v]
+  defp filter_control_tokens(_, _v), do: []
+
+  defp wrong_source(stream, packet, msg) do
+    Logger.warn("ssh packet of type #{elem packet, 0} received from #{msg}", @logger_metadata)
+    {[], stream}
+  end
+
+  #################################################################
+  ## stream iteration: last_stream
+
+  @doc false
+  @spec last_stream(t) :: :ok
+  def last_stream(stream) do
+    drain(stream)
+
+    # close out our file descriptors
+    if stream.fds do
+      Enum.each(stream.fds, fn {_, fd} -> File.close(fd) end)
+    end
+
+    # close out the ssh connection
+    :ssh_connection.close(stream.conn, stream.chan)
+  end
+
+  defp drain(stream = %{conn: conn, chan: chan}) do
+    # drain the last packets.
+    receive do
+      {:eof, ^conn, {:eof, ^chan}} ->
+        drain(stream)
+      {:ssh_cm, ^conn, {:exit_status, ^chan, _status}} ->
+        drain(stream)
+      {:ssh_cm, ^conn, {:closed, ^chan}} ->
+        drain(stream)
+      after 1 ->
+        stream
+    end
+  end
+
+  ###################################################################
+  ## user-facing api
 
   @spec send_data(t, iodata) :: :ok
   @doc """
@@ -178,137 +338,6 @@ defmodule SSH.Stream do
     :ok
   end
 
-  def milliseconds_left(:infinity), do: :infinity
-  def milliseconds_left(stop_time) do
-    time = DateTime.diff(stop_time, DateTime.utc_now, :millisecond)
-    if time > 0, do: time, else: 0
-  end
-
-  defp drain(stream = %{conn: conn, chan: chan}) do
-    # drain the last packets.
-    receive do
-      {:eof, ^conn, {:eof, ^chan}} ->
-        drain(stream)
-      {:ssh_cm, ^conn, {:exit_status, ^chan, _status}} ->
-        drain(stream)
-      {:ssh_cm, ^conn, {:closed, ^chan}} ->
-        drain(stream)
-      after 1 ->
-        stream
-    end
-  end
-
-  @spec last_stream(t) :: :ok
-  def last_stream(stream) do
-    drain(stream)
-
-    # close out our file descriptors
-    if stream.fds do
-      Enum.each(stream.fds, fn {_, fd} -> File.close(fd) end)
-    end
-
-    # close out the ssh connection
-    :ssh_connection.close(stream.conn, stream.chan)
-  end
-
-  @typedoc "binary data sent over the server's standard out (0) or standard error (1)"
-  @type iostream_message :: {:data, SSH.chan, 0 | 1, binary}
-
-  @typedoc "ssh protocol stream control messages"
-  @type control_message :: {:eof, SSH.chan} | {:exit_status, SSH.chan, integer} | {:closed, SSH.chan}
-
-  @typedoc "messages that the local client can use to send streaming content"
-  @type outbound_message :: {:send, SSH.chan, binary} | {:send_eof, SSH.chan}
-
-  @typedoc """
-  all messages that are blocked by the stream control loop.
-
-  Note that most of these are the third term in a `{:ssh_cm, conn, <message>}` tuple.
-  """
-  @type ssh_message :: iostream_message | control_message | outbound_message
-
-  @typedoc "the default tokens that can be sent for stream processing"
-  @type stream_tokens :: :eof | {:stdout, binary} | {:stderr, binary} | {:stream, binary} | {:retval, integer} | :halt
-
-  @spec process_message(t, ssh_message) :: {[term], t}
-  defp process_message(stream = %{chan: chan}, {:data, chan, 0, data}) do
-    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    stream.on_stdout.(data, stream)
-  end
-  defp process_message(stream = %{chan: chan}, {:data, chan, 1, data}) do
-    :ssh_connection.adjust_window(stream.conn, chan, byte_size(data))
-    stream.on_stderr.(data, stream)
-  end
-  defp process_message(stream = %{chan: chan}, {:eof, chan}) do
-    {filter_control_messages(stream, :eof), stream}
-  end
-  defp process_message(stream, {:eof, _}) do
-    {[], stream}
-  end
-  defp process_message(stream = %{chan: chan}, {:exit_status, chan, status}) do
-    {filter_control_messages(stream, {:retval, status}), stream}
-  end
-  defp process_message(stream = %{chan: chan}, {:closed, chan}) do
-    {:halt, stream}
-  end
-  defp process_message(stream = %{chan: chan}, {:send, chan, payload}) do
-    # TODO: figure out error handling here.
-    :ssh_connection.send(stream.conn, stream.chan, payload)
-    {[], stream}
-  end
-  defp process_message(stream = %{chan: chan}, {:send_eof, chan}) do
-    # TODO: figure out what to do with this.
-    :ssh_connection.send_eof(stream.conn, stream.chan)
-    {[], stream}
-  end
-  defp process_message(stream, packet) when is_tuple(packet) do
-    wrong_source(stream, packet, "unexpected channel: #{elem packet, 1}")
-  end
-
-  # TODO: do a better job of describing term below:
-  @spec filter_control_messages(t, term) :: [term]
-  defp filter_control_messages(%{stream_control_messages: true}, v), do: [v]
-  defp filter_control_messages(_, _v), do: []
-
-  defp wrong_source(stream, packet, msg) do
-    Logger.warn("ssh packet of type #{elem packet, 0} received from #{msg}", @logger_metadata)
-    {[], stream}
-  end
-
-  ###################################################################
-  ## stream data processor selection
-
-  # convert a user specified arity/1 value into an arity/2  with passthrough on value 2
-  defp get_processor(fun, _) when is_function(fun, 1), do: fn val, any -> {fun.(val), any} end
-  defp get_processor(fun, _) when is_function(fun, 2), do: fun
-  defp get_processor(:stream, _), do: fn value, any -> {[value], any} end
-  defp get_processor(:stdout, _), do: &silent(IO.write(&1), &2)
-  defp get_processor(:stderr, _), do: &silent(IO.write(:stderr, &1), &2)
-  defp get_processor(:raw, device), do: &{[{device, &1}], &2}
-  defp get_processor(:silent, _), do: &silent/2
-  defp get_processor({:file, _}, channel), do: &silent(IO.write(&2.fds[channel], &1), &2)
-  # default processors, if we take a nil in the first term.
-  defp get_processor(nil, :stdout), do: get_processor(:stream, :stdout) # send stdout to the stream.
-  defp get_processor(nil, :stderr), do: get_processor(:stderr, :stderr) # send stderr to stderr
-
-  @spec silent(any, SSH.Stream.t) :: {[], SSH.Stream.t}
-  defp silent(_, stream), do: {[], stream}
-
-  ###################################################################
-  ## file descriptor things
-
-  defp fds_for(options) do
-    Enum.flat_map(options, fn
-      {mode, {:file, path}} ->
-        case File.open(path, [:append]) do
-          {:ok, fd} -> [{mode, fd}]
-          _ ->
-            raise File.Error, path: path
-        end
-      _ -> []
-    end)
-  end
-
   ###################################################################
   ## protocol implementations
 
@@ -336,6 +365,9 @@ defmodule SSH.Stream do
   end
 
   defimpl Collectable do
+    @type stream :: SSH.Stream.t
+    @type continuation :: {:cont, String.t} | :done | :halt
+    @spec into(stream) :: {stream, (stream, continuation -> stream | :ok)}
     def into(stream) do
       collector_fun = fn
         str, {:cont, content} ->

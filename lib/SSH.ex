@@ -208,7 +208,7 @@ defmodule SSH do
   @doc """
   closes the ssh connection.
 
-  Typically you will pass the connection object to this function.  If your
+  Typically you will pass the connection reference to this function.  If your
   connection is contained to its own transient task process, you may not need
   to call this function as the ssh client library will detect that the process
   has ended and clean up after you.

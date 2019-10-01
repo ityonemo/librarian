@@ -7,8 +7,6 @@ defmodule SSH.SCP.Fetch do
 
   @behaviour SSH.ModuleApi
 
-  # TODO: implement hostile scp values testing.
-
   @impl true
   @spec init(SSH.Stream.t, any) :: {:ok, SSH.Stream.t} | {:error, String.t}
   def init(stream, _) do
@@ -17,8 +15,6 @@ defmodule SSH.SCP.Fetch do
     SSH.Stream.send_data(stream, <<0>>)
     {:ok, stream}
   end
-
-  #TODO : work with the rest of the stuff here!
 
   @impl true
   @spec on_stdout(binary, SSH.Stream.t) :: {[], SSH.Stream.t}
