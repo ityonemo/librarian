@@ -185,6 +185,7 @@ defmodule SSH do
     end
   end
 
+  # TODO: Doc this
   @doc """
   creates an SSH stream struct as an ok tuple or error tuple.
   """
@@ -241,6 +242,7 @@ defmodule SSH do
   @typedoc false
   @type run_result :: {:ok, run_content, retval} | {:error, term}
 
+  # TODO: doc this
   @doc """
   some documentation about the "run" command
   """
