@@ -100,9 +100,12 @@ defmodule SSH do
 
   ### options:
 
-  - `login:` username to log in.
-  - `port:`  port to use to ssh, defaults to 22.
-  - `label:` see [labels](#connect/2-labels)
+  - `:use_ssh_config` see `SSH.Config`, defaults to `false`.
+  - `:global_config_path` see `SSH.Config`.
+  - `:user_config_path` see `SSH.Config`.
+  - `:user` username to log in as.
+  - `:port` port to use to ssh, defaults to 22.
+  - `:label` see [labels](#connect/2-labels)
 
   and other SSH options.  Some conversions between ssh options and SSH.connect
   options:
@@ -148,16 +151,13 @@ defmodule SSH do
   @spec connect(remote, keyword) :: connect_result
   def connect(remote, options \\ [])
   def connect(remote, options) when is_list(remote) do
-
-    login = normalize(options[:login])
-    port = options[:port] || 22
-
-    new_options = options
-    |> Keyword.merge(login)
-    |> Keyword.drop([:port, :login, :label])
+    # default to the charlist version.
+    options! = SSH.Config.assemble(remote, options)
+    port = options![:port]
+    options! = Keyword.delete(options!, :port)
 
     remote
-    |> :ssh.connect(port, new_options)
+    |> :ssh.connect(port, options!)
     |> stash_label(options[:label])
   end
   def connect(remote, options) when is_binary(remote) do
@@ -182,17 +182,6 @@ defmodule SSH do
   end
   defp stash_label(res, _), do: res
 
-  # TODO: consider moving this out to a different module.
-  @spec normalize(nil | binary | charlist) :: [{:user, charlist}]
-  defp normalize(nil) do
-    case System.cmd("whoami", []) do
-      {username, 0} -> normalize(String.trim(username))
-      _ -> []
-    end
-  end
-  defp normalize(str) when is_binary(str), do: [user: String.to_charlist(str)]
-  defp normalize(charlist) when is_list(charlist), do: [user: charlist]
-
   @doc """
   like `connect/2` but raises with a ConnectionError instead of emitting an error tuple.
   """
@@ -205,7 +194,6 @@ defmodule SSH do
         raise SSH.ConnectionError, "error connecting to #{remote}: #{message}"
     end
   end
-
 
   @doc """
   creates an SSH stream struct as an ok tuple or error tuple.
@@ -357,7 +345,6 @@ defmodule SSH do
     end
   end
 
-  # TODO: consider moving this out to its own module.
   defp consume(str, {status, list, retval}) when is_binary(str), do: {status, [list | str], retval}
   defp consume(token = {a, b}, {status, list, retval}) when is_atom(a) and is_binary(b) do
     {status, [token | list], retval}
@@ -410,9 +397,6 @@ defmodule SSH do
 
   #############################################################################
   ## SCP MODE: sending
-
-  # TODO: make this work with iodata
-  # TODO: check that the permissions part is OK.
 
   @typedoc false
   @type send_result :: :ok | {:error, term}

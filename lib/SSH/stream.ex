@@ -371,7 +371,6 @@ defmodule SSH.Stream do
     def into(stream) do
       collector_fun = fn
         str, {:cont, content} ->
-          # TODO: error handling here
           :ssh_connection.send(str.conn, str.chan, content)
           str
         str, :done ->
