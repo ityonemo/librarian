@@ -9,10 +9,10 @@ defmodule SSHTest.ConfigTest do
   """
 
   test "we can pull basic configuration out from a config file" do
-    assert %{"foobar" => %{
+    assert %{"foobar" => [
       user: "baz",
       host_name: "8.8.8.8"
-    }} == SSH.Config.parse(@basic_config)
+    ]} == SSH.Config.parse(@basic_config)
   end
 
   @all_config """
@@ -32,7 +32,7 @@ defmodule SSHTest.ConfigTest do
   """
 
   test "we can pull all the configuration out from config file" do
-    assert %{"quux" => %{
+    assert %{"quux" => [
       user: "bling",
       host_name: "4.4.4.4",
       identity_file: "~/.ssh/new_id.pem",
@@ -41,10 +41,10 @@ defmodule SSHTest.ConfigTest do
       connect_timeout: 10_000,
       strict_host_key_checking: false,
       user_known_hosts_file: "~/user_hosts_file"
-    },
-    "boo" => %{
+    ],
+    "boo" => [
       user: "abcd",
-      host_name: "test.local"}} == SSH.Config.parse(@all_config)
+      host_name: "test.local"]} == SSH.Config.parse(@all_config)
   end
 
 end

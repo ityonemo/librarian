@@ -49,7 +49,7 @@ defmodule SSH.Config do
   - `:user_config_path` sets the user config path.  If set to false, will
     suppress checking local configs.
   """
-  @spec load(keyword) :: %{optional(String.t) => map}
+  @spec load(keyword) :: %{optional(String.t) => keyword}
   def load(options \\ []) do
     global_config_path = options[:global_config_path] ||
       Application.get_env(
@@ -89,7 +89,7 @@ defmodule SSH.Config do
   @doc """
   parses a configuration text, loaded as a string.
   """
-  @spec parse(String.t) :: %{optional(String.t) => map}
+  @spec parse(String.t) :: %{optional(String.t) => keyword}
   def parse(config_text) do
     config_text
     |> String.split("\n")
@@ -129,14 +129,14 @@ defmodule SSH.Config do
     end
   end
 
-  @spec complete(parse_intermediate) :: %{optional(String.t) => map}
+  @spec complete(parse_intermediate) :: %{optional(String.t) => keyword}
   defp complete({_, nil, nil}), do: %{}
   defp complete({kw_so_far, this_name, this_kw}) do
     kw_so_far
     |> Kernel.++([{this_name, this_kw}])
     |> Enum.map(fn
       {host, kw} ->
-        keymap = kw |> Enum.map(&adjust/1) |> Enum.into(%{})
+        keymap = kw |> Enum.map(&adjust/1)
         {host, keymap} end)
     |> Enum.into(%{})
   end
@@ -157,26 +157,42 @@ defmodule SSH.Config do
 
   #################################################################
 
+  @allowed_options [
+    :host_name, :user, :port, :silently_accept_hosts, :quiet_mode,
+    :connect_timeout
+  ]
+
   @doc false
   # routine called by SSH.connect/2 to correctly assemble all of
   # the connect options and all of the config options
   @spec assemble(charlist, keyword) :: keyword
   def assemble(remote, options) do
-    ssh_options = if options[:use_ssh_config] do
-      remote_str = List.to_string(remote)
-      options
-      |> load
-      |> Map.get(remote_str)
-    else
-      []
+    case remote do
+      t when is_tuple(t) -> [host_name: :inet.ntoa(t)]
+      l when is_list(l) ->
+        options
+        |> load_if_enabled
+        |> Map.get(List.to_string(l), [])
+        |> Kernel.++([host_name: l])
+      s when is_binary(s) ->
+        options
+        |> load_if_enabled
+        |> Map.get(s, [])
+        |> Kernel.++([host_name: s])
     end
-
-    ssh_options
     |> Keyword.merge(options)  # user options take precedence.
     |> Keyword.put_new_lazy(:user, &find_user/0)
     |> rename_to_erlang_ssh
     |> Keyword.put_new(:port, 22)
-    |> filter_implemented      # whitelist usable options.
+    |> Keyword.take(@allowed_options) # whitelist usable options.
+  end
+
+  defp load_if_enabled(options) do
+    if options[:use_ssh_config] do
+      load(options)
+    else
+      %{}
+    end
   end
 
   defp find_user do
@@ -188,18 +204,13 @@ defmodule SSH.Config do
 
   defp rename_to_erlang_ssh(options) do
     Enum.map(options, fn
-      {:strict_host_key_checking, v} -> {:silently_accept_hosts, v}
-      {:user, usr} when is_binary(usr) -> {:user, String.to_charlist(usr)}
+      {:strict_host_key_checking, v} ->
+        {:silently_accept_hosts, v}
+      {:user, usr} when is_binary(usr) ->
+        {:user, String.to_charlist(usr)}
+      {:host_name, host} when is_binary(host) ->
+        {:host_name, String.to_charlist(host)}
       any -> any
-    end)
-  end
-
-  @allowed_options [
-    :user, :port, :silently_accept_hosts, :quiet_mode, :connect_timeout
-  ]
-  defp filter_implemented(options) do
-    Enum.filter(options, fn {k, _v} ->
-      k in @allowed_options
     end)
   end
 

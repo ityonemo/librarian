@@ -149,26 +149,14 @@ defmodule SSH do
   """
   @impl true
   @spec connect(remote, keyword) :: connect_result
-  def connect(remote, options \\ [])
-  def connect(remote, options) when is_list(remote) do
+  def connect(remote, options \\ [])do
     # default to the charlist version.
-    options! = SSH.Config.assemble(remote, options)
-    port = options![:port]
-    options! = Keyword.delete(options!, :port)
+    options1 = SSH.Config.assemble(remote, options)
+    options2 = Keyword.drop(options1, [:port, :host_name])
 
-    remote
-    |> :ssh.connect(port, options!)
+    options1[:host_name]
+    |> :ssh.connect(options1[:port], options2)
     |> stash_label(options[:label])
-  end
-  def connect(remote, options) when is_binary(remote) do
-    remote
-    |> String.to_charlist
-    |> connect(options)
-  end
-  def connect(remote_ip = {_a, _b, _c, _d}, options) do
-    remote_ip
-    |> :inet.ntoa
-    |> connect(options)
   end
 
   @spec stash_label({:ok, conn} | {:error, any}, term) :: {:ok, conn} | {:error, any} | no_return
