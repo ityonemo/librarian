@@ -12,7 +12,7 @@ defmodule SSH.ModuleApi do
   @doc """
   initializes your SSH stream.
 
-  A return value of `{:ok, acc}` means that any preconditions for the
+  A return value of `{:ok, stream}` means that any preconditions for the
   stream have been successfully completed.  You should return the initialized
   accumulator as the second part of the tuple.  A return value of `{:error, any}`
   indicates an error in initialization, and the SSH channel will not be created.
@@ -48,8 +48,6 @@ defmodule SSH.ModuleApi do
   """
   @callback on_stderr(stream_data::binary, SSH.Stream.t) ::
     {output::[term] | :halt, SSH.Stream.t}
-
-  # TODO: consider renaming to "data timeout"
 
   @doc """
   responds to when it takes too long for the other side to respond with data.

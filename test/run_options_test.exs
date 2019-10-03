@@ -82,7 +82,7 @@ defmodule SSHTest.RunOptionsTest do
 
     test "a nonexistent command causes a throw" do
       assert capture_io(:stderr, fn ->
-        assert_raise RuntimeError, fn ->
+        assert_raise SSH.RunError, fn ->
           "localhost"
           |> SSH.connect!
           |> SSH.run!("foobar")
@@ -91,7 +91,7 @@ defmodule SSHTest.RunOptionsTest do
     end
 
     test "a failing command causes a throw" do
-      assert_raise RuntimeError, fn ->
+      assert_raise SSH.RunError, fn ->
         "localhost"
         |> SSH.connect!
         |> SSH.run!("false")
