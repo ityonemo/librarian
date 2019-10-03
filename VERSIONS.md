@@ -2,12 +2,11 @@
 
 ## 0.1
 
-(planned)
-
 - first implementation
 - ssh commands
 - scp features
 - ssh library api
+- use ssh configuration parameters from file
 
 ## 0.2
 
