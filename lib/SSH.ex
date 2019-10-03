@@ -26,6 +26,20 @@ defmodule SSH do
   SSH.run!(conn, "echo hello ssh")  # ==> "hello ssh"
   ```
 
+  ## Bang vs non-bang functions
+
+  As a general rule, if you expect to run a single or series of tasks with
+  transient (or no) supervision, for example in a worker task or elixir script
+  you should use the bang function and let the task fail, designing your
+  supervision accordingly.  This will also potentially let you be lazy about
+  system resources such as SSH connections.
+
+  If you expect your SSH task to run as a part of a long-running process
+  (for example, checking in on a host and retrieving data), you should use the
+  error tuple forms and also be careful about closing your ssh connections
+  after use.  Check the [connection labels](#connect/2-labels) documentation
+  for a strategy to organize your code around this neatly.
+
   ## Mocking
 
   There's a good chance you'll want to mock your SSH commands and responses.
@@ -93,9 +107,14 @@ defmodule SSH do
   and other SSH options.  Some conversions between ssh options and SSH.connect
   options:
 
-  | ssh commandline option    | SSH library option            |
-  | ------------------------- | ----------------------------- |
-  | `-o NoStrictHostChecking` | `silently_accept_hosts: true` |
+  | ssh commandline option        | SSH library option            |
+  | ----------------------------- | ----------------------------- |
+  | `-o StrictHostKeyChecking=no` | `silently_accept_hosts: true` |
+  | `-q`                          | `quiet_mode: true`            |
+  | `-o ConnectTimeout=time`      | `connect_timeout: time_in_ms` |
+  | `-i pemfile`                  | `identity: file`              |
+
+  also consult documentation on client options in the [erlang docs](http://erlang.org/doc/man/ssh.html#type-client_options)
 
   ### labels:
 
@@ -122,6 +141,8 @@ defmodule SSH do
     labels.
   - The ssh connection label is stored in the process mailbox, so the label
     will not be valid across process boundaries.
+  - If the ssh connection failed in the first place, the tagged close will
+    return an error tuple.  In the example, this will be silent.
   """
   @impl true
   @spec connect(remote, keyword) :: connect_result
@@ -185,9 +206,32 @@ defmodule SSH do
     end
   end
 
-  # TODO: Doc this
+
   @doc """
   creates an SSH stream struct as an ok tuple or error tuple.
+
+  ## Options
+
+  - `{iostream, redirect}`:  `iostream` may be either `:stdout` or `:stderr`.  `redirect`
+    may be one of the following:
+    - `:stream` sends the data to the stream.
+    - `:stdout` sends the data to the `group_leader` stdout.
+    - `:stderr` sends the data to the standard error io stream.
+    - `:silent` deletes all of the data.
+    - `:raw` sends the data to the stream tagged with source information as
+      either `{:stdout, data}` or `{:stderr, data}`, as appropriate.
+    - `{:file, path}` sends the data to a new or existing file at the provided
+      path.
+    - `fun/1` processes the data via the function, with the output flat-mapped
+      into the stream. this means that the results of `fun/1` should be lists,
+      with an empty list sending nothing into the stream.
+    - `fun/2` is like `fun/1` except the stream struct is passed as the second
+      parameter.  The output of `fun/2` should take the shape
+      `{flat_map_results, modified_stream}`.  You may use the `:data` field of
+      the stream struct to store arbitrary data; and a value of `nil` indicates
+      that it has been unused.
+  - `{:stream_control_messages, boolean}`: should the stream control messages `:eof`, or `{:retval, integer}`
+    be sent to the stream?
   """
   @spec stream(conn, String.t, keyword) :: {:ok, SSH.Stream.t} | {:error, String.t}
   def stream(conn, cmd, options \\ []) do
@@ -242,9 +286,45 @@ defmodule SSH do
   @typedoc false
   @type run_result :: {:ok, run_content, retval} | {:error, term}
 
-  # TODO: doc this
   @doc """
-  some documentation about the "run" command
+  runs a command on the remote host.
+
+  ### Options
+
+  - `{iostream, redirect}`:  `iostream` may be either `:stdout` or `:stderr`.  `redirect`
+    may be one of the following:
+    - `:stream` sends the data to the stream.
+    - `:stdout` sends the data to the `group_leader` stdout.
+    - `:stderr` sends the data to the standard error io stream.
+    - `:silent` deletes all of the data.
+    - `:raw` sends the data to the stream tagged with source information as either
+      `{:stdout, data}` or `{:stderr, data}`, as appropriate.
+    - `{:file, path}` sends the data to a new or existing file at the provided path.
+    - `fun/1` processes the data via the function, with the output flat-mapped into the stream.
+      this means that the results of `fun/1` should be lists, with an empty list sending nothing
+      into the stream.
+    - `fun/2` is like `fun/1` except the stream struct is passed as the second parameter.  The
+      output of `fun/2` should take the shape `{flat_map_results, modified_stream}`.  You may use
+      the `:data` field of the stream struct to store arbitrary data; and a value of `nil` indicates
+      that it has been unused.
+  - `{:dir, path}`: changes directory to `path` and then runs the command
+  - `{:as, :binary}` (default): outputs result as a binary
+  - `{:as, :iolist}`: outputs result as an iolist
+  - `{:as, :tuple}`: result takes the shape of the tuple `{stdout_binary, stderr_binary}`
+    note that this mode will override any other redirection selected.
+
+  ### Example:
+
+  ```elixir
+  SSH.run(conn, "hostname")  # ==> {:ok, "hostname_of_remote\\n", 0}
+
+  SSH.run(conn, "some_program", stderr: :silent) # ==> similar to running "some_program 2>/dev/null"
+
+  SSH.run(conn, "some_program", stderr: :stream) # ==> similar to running "some_program 2>&1"
+
+  SSH.run(conn, "some_program", stdout: :silent, stderr: :stream) # ==> only capture standard error
+  ```
+
   """
   @impl true
   @spec run(conn, String.t, keyword) :: run_result
@@ -259,15 +339,21 @@ defmodule SSH do
     end
   end
 
+  @doc """
+  like `run/3` except raises on errors instead of returning an error tuple.
+
+  Note that by default this raises in the case that the SSH connection fails
+  AND in the case that the remote command returns non-zero.
+  """
   @impl true
   @spec run!(conn, String.t, keyword) :: run_content | no_return
   def run!(conn, cmd, options \\ []) do
     case run(conn, cmd, options) do
       {:ok, result, 0} -> result
       {:ok, _result, retcode} ->
-        raise "command errored with retcode #{retcode}"
+        raise SSH.RunError, "command errored with retcode #{retcode}"
       error ->
-        raise "ssh errored with #{inspect(error)}"
+        raise SSH.StreamError, "ssh errored with #{inspect(error)}"
     end
   end
 
@@ -396,7 +482,7 @@ defmodule SSH do
 
   Under the hood, this uses the scp protocol to transfer files.
 
-  Protocol is as follows:
+  The SCP protocol is as follows:
   - execute `scp` remotely in the undocumented `-f <source>` mode
   - send a single zero byte to initiate the conversation
   - wait for a control string `"C0<perms> <size> <filename>"`
@@ -405,9 +491,6 @@ defmodule SSH do
   - send a single zero byte
 
   The perms term should be in octal, and the filename should be rootless.
-
-  options:
-  - `:permissions` - sets unix-style permissions on the file.  Defaults to `0o644`
 
   Example:
   ```
@@ -441,5 +524,9 @@ defmodule SSH do
 end
 
 defmodule SSH.StreamError do
+  defexception [:message]
+end
+
+defmodule SSH.RunError do
   defexception [:message]
 end
