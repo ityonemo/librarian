@@ -30,6 +30,8 @@ sure that `Application.ensure_all_running(:ssh)` has been called *before* you
 attempt any Librarian commands, or else you may wind up with a race condition, 
 since OTP may take a while to get its default `:ssh` package up and running.
 
+## Examples
+
 **NB** all of these commands assume that you have passwordless ssh keys to the 
 server "some.other.server", to the user with the same username as the currently 
 running BEAM VM.  For help with other uses, consult the documentation.
