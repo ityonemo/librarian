@@ -153,20 +153,11 @@ defmodule SSH do
     options1 = SSH.Config.assemble(remote, options)
     options2 = Keyword.drop(options1, [:port, :host_name, :identity])
 
-    # currently we have a terrible hack of a solution,
-    # which is to copy the file over to an ad-hoc temporary directory
-    # for a hot second and then delete it.  There is a better option,
-    # but not going to implement it quite yet.
-
+    # attempt to resolve the identity issue here.  Maybe it will go into SSH.Config?
     identity = options1[:identity]
     options3 = if identity do
-      random_filename = Enum.take_random(?a..?z, 16)
-      random_path = Path.join("/tmp", random_filename)
-      Process.put(:"$ssh_identity_dir", random_path)
-      File.mkdir_p(random_path)
-      File.cp(identity, Path.join(random_path, "id_rsa.pub"))
-
-      Keyword.put(options2, :user_dir, random_path)
+      # append our ClientIdentity handler.
+      [{:key_cb, {SSH.ClientIdentity, identity: Path.expand(identity)}} | options2]
     else
       options2
     end
@@ -174,12 +165,6 @@ defmodule SSH do
     options1[:host_name]
     |> :ssh.connect(options1[:port], options3)
     |> stash_label(options[:label])
-
-  after
-    identity_file = Process.get(:"$ssh_identity_dir")
-    if identity_file do
-      File.rm_rf(identity_file)
-    end
   end
 
   @spec stash_label({:ok, conn} | {:error, any}, term) :: {:ok, conn} | {:error, any} | no_return

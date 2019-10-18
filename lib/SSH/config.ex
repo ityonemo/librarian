@@ -159,7 +159,7 @@ defmodule SSH.Config do
 
   @allowed_options [
     :host_name, :user, :port, :silently_accept_hosts, :quiet_mode,
-    :connect_timeout
+    :connect_timeout, :identity
   ]
 
   @doc false
