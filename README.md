@@ -88,6 +88,8 @@ def deps do
 end
 ```
 
+documentation can be found here: [https://hexdocs.pm/librarian/SSH.html](https://hexdocs.pm/librarian/SSH.html)
+
 ## Testing
 
 Almost all of Librarian's tests are integration tests.  These tests are end-to-end and run against an active, default Linux SSH server.  To properly run these tests, you should have the following:
