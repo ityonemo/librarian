@@ -1,4 +1,4 @@
-### Librarian Versions
+# Librarian Versions
 
 ## 0.1
 
@@ -7,6 +7,12 @@
 - scp features
 - ssh library api
 - use ssh configuration parameters from file
+
+### 0.1.1
+
+- support for identity files
+- move the connection tag to the process dictionary instead of
+  the message queue.
 
 ## 0.2
 
