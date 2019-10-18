@@ -223,6 +223,8 @@ defmodule SSH do
       that it has been unused.
   - `{:stream_control_messages, boolean}`: should the stream control messages `:eof`, or `{:retval, integer}`
     be sent to the stream?
+  - `module: {mod, init}`,  The stream is operated using an module with behaviour `SSH.ModuleApi`
+  - `data_timeout: timeout`, how long to wait between packets till we send a timeout event.
   """
   @spec stream(conn, String.t, keyword) :: {:ok, SSH.Stream.t} | {:error, String.t}
   def stream(conn, cmd, options \\ []) do
