@@ -141,7 +141,7 @@ defmodule SSH do
   Some important points:
   - If you are wrangling multiple SSH sessions, please use unique connection
     labels.
-  - The ssh connection label is stored in the process mailbox, so the label
+  - The ssh connection label is stored in the process dictionary, so the label
     will not be valid across process boundaries.
   - If the ssh connection failed in the first place, the tagged close will
     return an error tuple.  In the example, this will be silent.
