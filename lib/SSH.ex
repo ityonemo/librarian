@@ -139,7 +139,6 @@ defmodule SSH do
   ```
 
   Some important points:
-  - The connection label may be any term except for a `pid` or `nil`
   - If you are wrangling multiple SSH sessions, please use unique connection
     labels.
   - The ssh connection label is stored in the process mailbox, so the label
@@ -152,11 +151,35 @@ defmodule SSH do
   def connect(remote, options \\ [])do
     # default to the charlist version.
     options1 = SSH.Config.assemble(remote, options)
-    options2 = Keyword.drop(options1, [:port, :host_name])
+    options2 = Keyword.drop(options1, [:port, :host_name, :identity])
+
+    # currently we have a terrible hack of a solution,
+    # which is to copy the file over to an ad-hoc temporary directory
+    # for a hot second and then delete it.  There is a better option,
+    # but not going to implement it quite yet.
+
+    identity = options1[:identity]
+    options3 = if identity do
+      random_filename = Enum.take_random(?a..?z, 16)
+      random_path = Path.join("/tmp", random_filename)
+      Process.put(:"$ssh_identity_dir", random_path)
+      File.mkdir_p(random_path)
+      File.cp(identity, Path.join(random_path, "id_rsa.pub"))
+
+      Keyword.put(options2, :user_dir, random_path)
+    else
+      options2
+    end
 
     options1[:host_name]
-    |> :ssh.connect(options1[:port], options2)
+    |> :ssh.connect(options1[:port], options3)
     |> stash_label(options[:label])
+
+  after
+    identity_file = Process.get(:"$ssh_identity_dir")
+    if identity_file do
+      File.rm_rf(identity_file)
+    end
   end
 
   @spec stash_label({:ok, conn} | {:error, any}, term) :: {:ok, conn} | {:error, any} | no_return
@@ -165,7 +188,14 @@ defmodule SSH do
     raise ArgumentError, "you can't make a pid label for an SSH connection."
   end
   defp stash_label(res = {:ok, conn}, label) do
-    send(self(), {:"$ssh", label, conn})
+    new_labels = :"$ssh"
+    |> Process.get
+    |> case do
+      nil -> %{label => conn}
+      map -> Map.put(map, label, conn)
+    end
+
+    Process.put(:"$ssh", new_labels)
     res
   end
   defp stash_label(res, _), do: res
@@ -242,10 +272,11 @@ defmodule SSH do
   @spec close(conn | term) :: :ok | {:error, String.t}
   def close(conn) when is_pid(conn), do: :ssh.close(conn)
   def close(label) do
-    receive do
-      {:"$ssh", ^label, pid} ->
+    case Process.get(:"$ssh") do
+      map = %{^label => pid} ->
+        Process.put(:"$ssh", Map.delete(map, label))
         :ssh.close(pid)
-      after 0 ->
+      _ ->
         {:error, "ssh connection with label #{label} not found"}
     end
   end
