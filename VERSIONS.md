@@ -14,6 +14,10 @@
 - move the connection tag to the process dictionary instead of
   the message queue.
 
+### 0.1.2
+
+- stream from a file into SSH.send
+
 ## 0.2
 
 (planned)
