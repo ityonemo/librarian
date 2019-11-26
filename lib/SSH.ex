@@ -431,7 +431,7 @@ defmodule SSH do
   ```
   """
   @impl true
-  @spec send(conn, String.t, Path.t, keyword) :: send_result
+  @spec send(conn, iodata, Path.t, keyword) :: send_result
   def send(conn, content, remote_file, options \\ []) do
     perms = Keyword.get(options, :permissions, 0o644)
     filename = Path.basename(remote_file)
