@@ -16,7 +16,6 @@
 
 ### 0.1.2
 
-- stream from a file into SSH.send
 - smarter defaults for run! and send!
 
 ## 0.2

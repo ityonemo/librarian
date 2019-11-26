@@ -343,7 +343,8 @@ defmodule SSH do
   @spec run!(conn, String.t, keyword) :: run_content | no_return
   def run!(conn, cmd, options \\ []) do
     case run(conn, cmd, options ++ [as: :tuple]) do
-      {:ok, {result, _}, 0} -> result
+      {:ok, {result, stderr}, 0} ->
+        if options[:io_tuple], do: {result, stderr}, else: result
       {:ok, result, 0} -> result
       {:ok, {_, stderr}, retcode} ->
         raise SSH.RunError, "command errored with retcode #{retcode}: #{stderr}"

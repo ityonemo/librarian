@@ -6,11 +6,10 @@ defmodule SSHTest.IdentityTest do
   @tmp_identity_file Path.join("/tmp/", Enum.take_random(?a..?z, 8))
 
   describe "when connecting" do
-    @tag :one
     test "you can supply an identity file" do
 
-      # copy the id_rsa.pub file to the temporary identity file.
-      "~/.ssh/id_rsa.pub"
+      # copy the id_rsa file to the temporary identity file.
+      "~/.ssh/id_rsa"
       |> Path.expand
       |> File.cp!(@tmp_identity_file)
 
