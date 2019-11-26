@@ -18,7 +18,11 @@
 
 - smarter defaults for run! and send!
 
-### 0.1.3 (proposed)
+### 0.1.3 
+
+- correct error trapping on connect!
+
+### 0.1.4 (proposed)
 
 - attempt streaming scp
 

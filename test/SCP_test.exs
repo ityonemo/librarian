@@ -6,7 +6,6 @@ defmodule SSHTest.SCPTest do
   @content "foo\nbar\n"
 
   @tmp_ssh_fetch "/tmp/ssh_fetch.txt"
-  @tag :one
   test "we can fetch a file with scp" do
     File.write!(@tmp_ssh_fetch, @content)
 
@@ -23,5 +22,32 @@ defmodule SSHTest.SCPTest do
 
     assert @content == File.read!(@tmp_ssh_send)
     File.rm_rf!(@tmp_ssh_send)
+  end
+
+  @tmp_ssh_big_file "/tmp/ssh_big_file"
+  @tmp_ssh_big_sent "/tmp/ssh_big_sent"
+  test "we can send a really big file" do
+    File.rm_rf!(@tmp_ssh_big_file)
+    File.rm_rf!(@tmp_ssh_big_sent)
+
+    fn -> <<Enum.random(0..255)>> end
+    |> Stream.repeatedly
+    |> Stream.take(1024 * 1024) # 1 MB
+    |> Enum.into(File.stream!(@tmp_ssh_big_file))
+
+    src_bin = File.read!(@tmp_ssh_big_file)
+
+    hash = :crypto.hash(:sha256, src_bin)
+
+    "localhost"
+    |> SSH.connect!
+    |> SSH.send!(src_bin, @tmp_ssh_big_sent)
+
+    res_bin = File.read!(@tmp_ssh_big_sent)
+
+    assert hash == :crypto.hash(:sha256, res_bin)
+
+    File.rm_rf!(@tmp_ssh_big_file)
+    File.rm_rf!(@tmp_ssh_big_sent)
   end
 end

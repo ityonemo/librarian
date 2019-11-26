@@ -194,7 +194,8 @@ defmodule SSH do
     case connect(remote, options) do
       {:ok, conn} -> conn
       {:error, message} ->
-        raise SSH.ConnectionError, "error connecting to #{remote}: #{message}"
+        host = if is_tuple(remote), do: :inet.ntoa(remote), else: remote
+        raise SSH.ConnectionError, "error connecting to #{host}: #{message}"
     end
   end
 
