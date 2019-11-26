@@ -22,7 +22,11 @@
 
 - correct error trapping on connect!
 
-### 0.1.4 (proposed)
+### 0.1.4
+
+- correct error calculating sizes of iolists
+
+### 0.1.5 (proposed)
 
 - attempt streaming scp
 

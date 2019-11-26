@@ -120,7 +120,7 @@ defmodule SSH.SCP.Send do
   end
 
   defp find_size(content) when is_binary(content), do: :erlang.size(content)
-  defp find_size([a | b]), do: find_size(a) + find_size(b)
+  defp find_size(content) when is_list(content), do: :erlang.iolist_size(content)
 
   @doc """
   postprocesses results sent to the ssh stream.
