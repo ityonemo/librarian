@@ -14,6 +14,14 @@
 - move the connection tag to the process dictionary instead of
   the message queue.
 
+### 0.1.2
+
+- smarter defaults for run! and send!
+
+### 0.1.3 (proposed)
+
+- attempt streaming scp
+
 ## 0.2
 
 (planned)
