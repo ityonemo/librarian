@@ -342,8 +342,11 @@ defmodule SSH do
   @impl true
   @spec run!(conn, String.t, keyword) :: run_content | no_return
   def run!(conn, cmd, options \\ []) do
-    case run(conn, cmd, options) do
+    case run(conn, cmd, options ++ [as: :tuple]) do
+      {:ok, {result, _}, 0} -> result
       {:ok, result, 0} -> result
+      {:ok, {_, stderr}, retcode} ->
+        raise SSH.RunError, "command errored with retcode #{retcode}: #{stderr}"
       {:ok, _result, retcode} ->
         raise SSH.RunError, "command errored with retcode #{retcode}"
       error ->
