@@ -347,9 +347,9 @@ defmodule SSH do
         if options[:io_tuple], do: {result, stderr}, else: result
       {:ok, result, 0} -> result
       {:ok, {_, stderr}, retcode} ->
-        raise SSH.RunError, "command errored with retcode #{retcode}: #{stderr}"
+        raise SSH.RunError, "command #{cmd} errored with retcode #{retcode}: #{stderr}"
       {:ok, _result, retcode} ->
-        raise SSH.RunError, "command errored with retcode #{retcode}"
+        raise SSH.RunError, "command #{cmd} errored with retcode #{retcode}"
       error ->
         raise SSH.StreamError, "ssh errored with #{inspect(error)}"
     end
