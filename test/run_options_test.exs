@@ -28,6 +28,7 @@ defmodule SSHTest.RunOptionsTest do
     end
 
     @tmp_file "/tmp/std_out_pipe"
+    @tag :one
     test "we can send standard out to a file" do
       File.rm_rf!(@tmp_file)
 

@@ -51,7 +51,7 @@ defmodule SSH.Stream do
       data_timeout:            :infinity,
       stream_control_messages: false,
       fds:                     fds_for(options),
-      on_stdout:               get_processor(default_stdout, :stdout),
+      on_stdout:               get_processor(options[:stdout] || default_stdout, :stdout),
       on_stderr:               get_processor(options[:stderr], :stderr),
       on_timeout:              options[:on_timeout] || &default_timeout/1]
     |> Keyword.merge(options)
@@ -70,13 +70,8 @@ defmodule SSH.Stream do
          :success    <- make_tty(conn, chan, options[:tty]),
          :success    <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
 
-      mergeable_options = options
-      |> Keyword.take([:on_stdout, :on_stderr, :on_timeout, :stream_control_messages, :fds, :data_timeout])
-      |> Enum.into(%{})
-
       options[:init].(
-        %__MODULE__{conn: conn, chan: chan, stop_time: stop_time}
-        |> Map.merge(mergeable_options),
+        struct(%__MODULE__{conn: conn, chan: chan, stop_time: stop_time}, options),
         options[:init_param])
     end
   end
@@ -106,7 +101,7 @@ defmodule SSH.Stream do
       {:ok, rows} -> rows
       _ -> 40
     end
-    [width: cols, height: rows, pty_opts: []]
+    [width: cols, height: rows]
   end
 
   #################################################################
