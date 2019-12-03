@@ -43,13 +43,15 @@ defmodule SSH.Stream do
     # make sure a command exists.
     options[:cmd] || raise ArgumentError, "you must supply a command for SSH."
 
+    default_stdout = if options[:tty], do: :stdout, else: :stream
+
     options = [ #default options
       init:                    &default_init/2,
       conn_timeout:            options[:timeout] || :infinity,
       data_timeout:            :infinity,
       stream_control_messages: false,
       fds:                     fds_for(options),
-      on_stdout:               get_processor(options[:stdout], :stdout),
+      on_stdout:               get_processor(options[:stdout] || default_stdout, :stdout),
       on_stderr:               get_processor(options[:stderr], :stderr),
       on_timeout:              options[:on_timeout] || &default_timeout/1]
     |> Keyword.merge(options)
@@ -65,18 +67,70 @@ defmodule SSH.Stream do
 
     # open a channel.
     with {:ok, chan} <- :ssh_connection.session_channel(conn, timeout),
-         :success <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
-
-      mergeable_options = options
-      |> Keyword.take([:on_stdout, :on_stderr, :on_timeout, :stream_control_messages, :fds, :data_timeout])
-      |> Enum.into(%{})
+         :success    <- make_tty(conn, chan, options[:tty]),
+         :success    <- make_env(conn, chan, options[:env]),
+         :success    <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
 
       options[:init].(
-        %__MODULE__{conn: conn, chan: chan, stop_time: stop_time}
-        |> Map.merge(mergeable_options),
+        struct(%__MODULE__{conn: conn, chan: chan, stop_time: stop_time}, options),
         options[:init_param])
     end
   end
+
+  #################################################################
+  ## initialization: tty and environment variable selection
+
+  @spec make_tty(SSH.conn, SSH.chan, keyword | boolean | nil) :: :success | :failure | {:error, :closed | :timeout}
+  defp make_tty(conn, chan, options) do
+    # default tty settings to that of the group leader.
+    case options do
+      lst when is_list(lst) ->
+        :ssh_connection.ptty_alloc(conn, chan, Keyword.merge(default_tty_options(), options))
+      true ->
+        :ssh_connection.ptty_alloc(conn, chan, default_tty_options())
+      _ ->
+        :success
+    end
+  end
+
+  defp default_tty_options() do
+    cols = case :io.columns() do
+      {:ok, cols} -> cols
+      _ -> 80
+    end
+    rows = case :io.rows() do
+      {:ok, rows} -> rows
+      _ -> 40
+    end
+    [width: cols, height: rows]
+  end
+
+  @spec make_env(SSH.conn, SSH.chan, keyword | nil) :: :success | :failure | {:error, :closed | :timeout}
+  defp make_env(conn, chan, envs) do
+    if is_list(envs) do
+      Logger.warn("this is currently unsupported until ERL-1107 is resolved")
+      Enum.each(envs, &set_env(conn, chan, &1))
+    end
+    :success
+  catch
+    # use this format to break out of the enum.
+    error -> error
+  end
+
+  defp set_env(conn, chan, {key, value}) when is_atom(key) and is_binary(value) do
+    set_env(conn, chan, {Atom.to_string(key), value})
+  end
+
+  defp set_env(conn, chan, {key, value}) when is_binary(key) and is_binary(value) do
+    case :ssh_connection.setenv(conn, chan,
+        String.to_charlist(key), String.to_charlist(value),
+        :infinity) do
+      :success -> :success
+      any -> throw any # use this to terminate the make_env procedure early.
+    end
+  end
+
+  defp set_env(_, _, _), do: raise ArgumentError, "invalid input for :env parameter"
 
   #################################################################
   ## initialization: handler lambda selection

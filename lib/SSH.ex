@@ -295,13 +295,20 @@ defmodule SSH do
     - `:raw` sends the data to the stream tagged with source information as either
       `{:stdout, data}` or `{:stderr, data}`, as appropriate.
     - `{:file, path}` sends the data to a new or existing file at the provided path.
-    - `fun/1` processes the data via the function, with the output flat-mapped into the stream.
-      this means that the results of `fun/1` should be lists, with an empty list sending nothing
-      into the stream.
-    - `fun/2` is like `fun/1` except the stream struct is passed as the second parameter.  The
-      output of `fun/2` should take the shape `{flat_map_results, modified_stream}`.  You may use
-      the `:data` field of the stream struct to store arbitrary data; and a value of `nil` indicates
-      that it has been unused.
+    - `fun/1` processes the data via the function, with the output flat-mapped
+      into the stream. this means that the results of `fun/1` should be lists,
+      with an empty list sending nothing into the stream.
+    - `fun/2` is like `fun/1` except the stream struct is passed as the second
+      parameter.  The output of `fun/2` should take the shape `{flat_map_results, modified_stream}`.
+      You may use the `:data` field of the stream struct to store arbitrary
+      data; and a value of `nil` indicates that it has been unused.
+  - `{:tty, true | <options>}`: register the connection as a tty connection.
+    Note this changes the default behavior to send the output to group leader
+    stdout instead of to the result, but this is overridable with the iostream
+    redirect above.  For options, see `:ssh_client_connection.ptty_alloc/4`
+  - `{:env, <env list>}`: a list of environment variables to be passed.  NB:
+    this is not active until OTP error [ERL-1107](https://bugs.erlang.org/browse/ERL-1107/)
+    is cleared.
   - `{:dir, path}`: changes directory to `path` and then runs the command
   - `{:as, :binary}` (default): outputs result as a binary
   - `{:as, :iolist}`: outputs result as an iolist
