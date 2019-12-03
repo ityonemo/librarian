@@ -68,6 +68,7 @@ defmodule SSH.Stream do
     # open a channel.
     with {:ok, chan} <- :ssh_connection.session_channel(conn, timeout),
          :success    <- make_tty(conn, chan, options[:tty]),
+         :success    <- make_env(conn, chan, options[:env]),
          :success    <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
 
       options[:init].(
@@ -79,7 +80,7 @@ defmodule SSH.Stream do
   #################################################################
   ## initialization: tty and environment variable selection
 
-  @spec make_tty(SSH.conn, SSH.chan, keyword | boolean | nil) :: :success | {:error, :closed | :timeout}
+  @spec make_tty(SSH.conn, SSH.chan, keyword | boolean | nil) :: :success | :failure | {:error, :closed | :timeout}
   defp make_tty(conn, chan, options) do
     # default tty settings to that of the group leader.
     case options do
@@ -103,6 +104,33 @@ defmodule SSH.Stream do
     end
     [width: cols, height: rows]
   end
+
+  @spec make_env(SSH.conn, SSH.chan, keyword | nil) :: :success | :failure | {:error, :closed | :timeout}
+  defp make_env(conn, chan, envs) do
+    if is_list(envs) do
+      Logger.warn("this is currently unsupported until ERL-1107 is resolved")
+      Enum.each(envs, &set_env(conn, chan, &1))
+    end
+    :success
+  catch
+    # use this format to break out of the enum.
+    error -> error
+  end
+
+  defp set_env(conn, chan, {key, value}) when is_atom(key) and is_binary(value) do
+    set_env(conn, chan, {Atom.to_string(key), value})
+  end
+
+  defp set_env(conn, chan, {key, value}) when is_binary(key) and is_binary(value) do
+    case :ssh_connection.setenv(conn, chan,
+        String.to_charlist(key), String.to_charlist(value),
+        :infinity) do
+      :success -> :success
+      any -> throw any # use this to terminate the make_env procedure early.
+    end
+  end
+
+  defp set_env(_, _, _), do: raise ArgumentError, "invalid input for :env parameter"
 
   #################################################################
   ## initialization: handler lambda selection

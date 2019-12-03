@@ -26,7 +26,12 @@
 
 - correct error calculating sizes of iolists
 
-### 0.1.5 (proposed)
+### 0.1.5
+
+- enable usage of tty: true in order to stream tty.
+- enable environment variables, but this blocks on [ERL-1107](https://bugs.erlang.org/browse/ERL-1107/)
+
+### 0.1.6 (proposed)
 
 - attempt streaming scp
 
