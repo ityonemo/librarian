@@ -43,13 +43,15 @@ defmodule SSH.Stream do
     # make sure a command exists.
     options[:cmd] || raise ArgumentError, "you must supply a command for SSH."
 
+    default_stdout = if options[:tty], do: :stdout, else: :stream
+
     options = [ #default options
       init:                    &default_init/2,
       conn_timeout:            options[:timeout] || :infinity,
       data_timeout:            :infinity,
       stream_control_messages: false,
       fds:                     fds_for(options),
-      on_stdout:               get_processor(options[:stdout], :stdout),
+      on_stdout:               get_processor(default_stdout, :stdout),
       on_stderr:               get_processor(options[:stderr], :stderr),
       on_timeout:              options[:on_timeout] || &default_timeout/1]
     |> Keyword.merge(options)
@@ -65,7 +67,8 @@ defmodule SSH.Stream do
 
     # open a channel.
     with {:ok, chan} <- :ssh_connection.session_channel(conn, timeout),
-         :success <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
+         :success    <- make_tty(conn, chan, options[:tty]),
+         :success    <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
 
       mergeable_options = options
       |> Keyword.take([:on_stdout, :on_stderr, :on_timeout, :stream_control_messages, :fds, :data_timeout])
@@ -76,6 +79,34 @@ defmodule SSH.Stream do
         |> Map.merge(mergeable_options),
         options[:init_param])
     end
+  end
+
+  #################################################################
+  ## initialization: tty and environment variable selection
+
+  @spec make_tty(SSH.conn, SSH.chan, keyword | boolean | nil) :: :success | {:error, :closed | :timeout}
+  defp make_tty(conn, chan, options) do
+    # default tty settings to that of the group leader.
+    case options do
+      lst when is_list(lst) ->
+        :ssh_connection.ptty_alloc(conn, chan, Keyword.merge(default_tty_options(), options))
+      true ->
+        :ssh_connection.ptty_alloc(conn, chan, default_tty_options())
+      _ ->
+        :success
+    end
+  end
+
+  defp default_tty_options() do
+    cols = case :io.columns() do
+      {:ok, cols} -> cols
+      _ -> 80
+    end
+    rows = case :io.rows() do
+      {:ok, rows} -> rows
+      _ -> 40
+    end
+    [width: cols, height: rows, pty_opts: []]
   end
 
   #################################################################
