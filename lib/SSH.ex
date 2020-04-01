@@ -282,7 +282,11 @@ defmodule SSH do
   @type run_result :: {:ok, run_content, retval} | {:error, term}
 
   @doc """
-  runs a command on the remote host.
+  runs a command on the remote host.  Typically returns `{:ok, result, retval}` where
+  `retval` is the unix return value from the range `0..255`.
+
+  the `result` value is governed by the passed options, but defaults to a string. of
+  the run value.
 
   ### Options
 
@@ -306,9 +310,8 @@ defmodule SSH do
     Note this changes the default behavior to send the output to group leader
     stdout instead of to the result, but this is overridable with the iostream
     redirect above.  For options, see `:ssh_client_connection.ptty_alloc/4`
-  - `{:env, <env list>}`: a list of environment variables to be passed.  NB:
-    this is not active until OTP error [ERL-1107](https://bugs.erlang.org/browse/ERL-1107/)
-    is cleared.
+  - `{:env, <env list>}`: a list of environment variables to be passed.  NB: typically
+    environment variables are filtered by the host environment.
   - `{:dir, path}`: changes directory to `path` and then runs the command
   - `{:as, :binary}` (default): outputs result as a binary
   - `{:as, :iolist}`: outputs result as an iolist

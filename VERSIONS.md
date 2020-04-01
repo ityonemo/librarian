@@ -31,9 +31,9 @@
 - enable usage of tty: true in order to stream tty.
 - enable environment variables, but this blocks on [ERL-1107](https://bugs.erlang.org/browse/ERL-1107/)
 
-### 0.1.6 (proposed)
+### 0.1.6
 
-- attempt streaming scp
+- update documentation in confusing spots.
 
 ## 0.2
 
