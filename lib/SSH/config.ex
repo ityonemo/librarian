@@ -162,6 +162,8 @@ defmodule SSH.Config do
     :connect_timeout, :identity, :user_interaction, :save_accepted_host
   ]
 
+  @default_options user_interaction: false
+
   @doc false
   # routine called by SSH.connect/2 to correctly assemble all of
   # the connect options and all of the config options
@@ -180,6 +182,7 @@ defmodule SSH.Config do
         |> Map.get(s, [])
         |> Kernel.++([host_name: s])
     end
+    |> Keyword.merge(@default_options)
     |> Keyword.merge(options)  # user options take precedence.
     |> Keyword.put_new_lazy(:user, &find_user/0)
     |> rename_to_erlang_ssh

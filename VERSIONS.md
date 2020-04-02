@@ -35,6 +35,11 @@
 
 - update documentation in confusing spots.
 
+### 0.1.7
+
+- add `:user_interaction` and `:save_accepted_host` values.
+- disable user interaction as a default
+
 ## 0.2
 
 (planned)
