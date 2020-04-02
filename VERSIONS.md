@@ -39,6 +39,7 @@
 
 - add `:user_interaction` and `:save_accepted_host` values.
 - disable user interaction as a default
+- add `SSH.Key.gen/3` function.
 
 ## 0.2
 
