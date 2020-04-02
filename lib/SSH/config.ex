@@ -32,6 +32,8 @@ defmodule SSH.Config do
     change in the future or may be accompanied by a warning.
   - wildcard configuration is not supported.
   - argument tokens are not supported.
+  - the `:user_interaction` option defaults to *false*, which is not the same as
+    the default in erlang.
 
   Due to these warnings, using configuration is defaulted to `false` in
   `SSH.connect/2`.  This behaviour may change in the future.
