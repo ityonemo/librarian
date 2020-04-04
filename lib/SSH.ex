@@ -106,6 +106,9 @@ defmodule SSH do
   - `:user` username to log in as.
   - `:port` port to use to ssh, defaults to 22.
   - `:label` see [labels](#connect/2-labels)
+  - `:link` links the connection with the calling process.  Note the
+    calling process *will not* die if the SSH connection is closed
+    using `close/1`.
 
   and other SSH options.  Some conversions between ssh options and SSH.connect
   options:
@@ -164,8 +167,16 @@ defmodule SSH do
 
     options1[:host_name]
     |> :ssh.connect(options1[:port], options3)
+    |> do_link(options[:link])
     |> stash_label(options[:label])
   end
+
+  @spec do_link({:ok, conn} | {:error, any}, boolean | nil) :: {:ok, conn} | {:error, any}
+  defp do_link({:ok, conn}, should_link?) do
+    if should_link?, do: Process.link(conn)
+    {:ok, conn}
+  end
+  defp do_link(any, _), do: any
 
   @spec stash_label({:ok, conn} | {:error, any}, term) :: {:ok, conn} | {:error, any} | no_return
   defp stash_label(res, nil), do: res

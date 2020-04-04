@@ -83,7 +83,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:librarian, "~> 0.1.7"}
+    {:librarian, "~> 0.1.8"}
   ]
 end
 ```

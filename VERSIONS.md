@@ -41,6 +41,10 @@
 - disable user interaction as a default
 - add `SSH.Key.gen/3` function.
 
+### 0.1.8
+
+- add `:link` option to link the calling process to the ssh connection.
+
 ## 0.2
 
 (planned)
