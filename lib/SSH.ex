@@ -106,9 +106,9 @@ defmodule SSH do
   - `:user` username to log in as.
   - `:port` port to use to ssh, defaults to 22.
   - `:label` see [labels](#connect/2-labels)
-  - `:link` links the connection with the calling process.  Note the
-    calling process *will not* die if the SSH connection is closed
-    using `close/1`.
+  - `:link` if `true`, links the connection with the calling process.
+    Note the calling process *will not* die if the SSH connection is
+    closed using `close/1`.
 
   and other SSH options.  Some conversions between ssh options and SSH.connect
   options:
