@@ -8,7 +8,7 @@ Elixir's SSH offering needs a major revamp.  `:librarian` provides a module,
 Librarian does not create any worker pools or have any opinions on how you should
 manage processes or supervision trees.  Future releases may provide
 batteries-included solutions for these concerns, but Librarian will never
-instantiate running processes in your BEAM without an explicit command to do so.  
+instantiate running processes in your BEAM without an explicit command to do so.
 Currently, because librarian uses `Stream` it cannot multiplex ssh channels on a
 single BEAM process, but support for those uses cases may be forthcoming.
 
@@ -19,21 +19,21 @@ package `:ssh` due to conflicts with the erlang `:ssh` builtin module.
 
 ## Supported Platforms
 
-`:librarian` is currently only tested on linux.  MacOSX should in theory work, 
-and there are parts that will probably **not** work on Windows.  Any assistance 
+`:librarian` is currently only tested on linux.  MacOSX should in theory work,
+and there are parts that will probably **not** work on Windows.  Any assistance
 getting these platforms up and running would be appreciated.
 
 ### For Mix Tasks and releases
 
-If you would like to use Librarian in Mix Tasks or Releases, you should make 
-sure that `Application.ensure_all_running(:ssh)` has been called *before* you 
-attempt any Librarian commands, or else you may wind up with a race condition, 
+If you would like to use Librarian in Mix Tasks or Releases, you should make
+sure that `Application.ensure_all_running(:ssh)` has been called *before* you
+attempt any Librarian commands, or else you may wind up with a race condition,
 since OTP may take a while to get its default `:ssh` package up and running.
 
 ## Examples
 
-**NB** all of these commands assume that you have passwordless ssh keys to the 
-server "some.other.server", to the user with the same username as the currently 
+**NB** all of these commands assume that you have passwordless ssh keys to the
+server "some.other.server", to the user with the same username as the currently
 running BEAM VM.  For help with other uses, consult the documentation.
 
 ```elixir
@@ -83,7 +83,7 @@ in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:librarian, "~> 0.1.8"}
+    {:librarian, "~> 0.1.9"}
   ]
 end
 ```
