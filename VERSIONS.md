@@ -45,14 +45,6 @@
 
 - add `:link` option to link the calling process to the ssh connection.
 
-## 0.2
+### 0.1.9
 
-(planned)
-
-- process structure: tasks, servers
-
-## 0.3
-
-(planned)
-
-- servers?
+- add support for new SSH module changes present in OTP 23
