@@ -5,7 +5,6 @@ defmodule SSHTest.LinkTest do
 
   def forever do
     receive do any -> any end
-    |> IO.inspect
   end
 
   test "if you link a process with an ssh conn the process will die if the ssh dies" do

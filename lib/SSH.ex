@@ -157,8 +157,7 @@ defmodule SSH do
     options2 = Keyword.drop(options1, [:port, :host_name, :identity])
 
     # attempt to resolve the identity issue here.  Maybe it will go into SSH.Config?
-    identity = options1[:identity]
-    options3 = if identity do
+    options3 = if identity = options1[:identity] do
       # append our ClientIdentity handler.
       [{:key_cb, {SSH.ClientIdentity, identity: Path.expand(identity)}} | options2]
     else
@@ -206,7 +205,7 @@ defmodule SSH do
       {:ok, conn} -> conn
       {:error, message} ->
         host = if is_tuple(remote), do: :inet.ntoa(remote), else: remote
-        raise SSH.ConnectionError, "error connecting to #{host}: #{message}"
+        raise SSH.ConnectionError, "error connecting to #{host}: #{error_fmt message}"
     end
   end
 
@@ -251,7 +250,7 @@ defmodule SSH do
     case stream(conn, cmd, options) do
       {:ok, stream} -> stream
       {:error, error} ->
-        raise SSH.StreamError, message: "error creating ssh stream: #{error}"
+        raise SSH.StreamError, message: "error creating ssh stream: #{error_fmt error}"
     end
   end
 
@@ -373,7 +372,7 @@ defmodule SSH do
       {:ok, _result, retcode} ->
         raise SSH.RunError, "command #{cmd} errored with retcode #{retcode}"
       error ->
-        raise SSH.StreamError, "ssh errored with #{inspect(error)}"
+        raise SSH.StreamError, "ssh errored with #{error_fmt error}"
     end
   end
 
@@ -483,7 +482,7 @@ defmodule SSH do
     case send(conn, content, remote_file, options) do
       :ok -> :ok
       {:error, message} ->
-        raise SSH.SCP.Error, "error executing SCP send: #{message}"
+        raise SSH.SCP.Error, "error executing SCP send: #{error_fmt message}"
     end
   end
 
@@ -533,9 +532,13 @@ defmodule SSH do
     case fetch(conn, remote_file, options) do
       {:ok, result} -> result
       {:error, message} ->
-        raise SSH.SCP.Error, "error executing SCP send: #{message}"
+        raise SSH.SCP.Error, "error executing SCP send: #{error_fmt message}"
     end
   end
+
+  defp error_fmt(atom) when is_atom(atom), do: atom
+  defp error_fmt(binary) when is_binary(binary), do: binary
+  defp error_fmt(any), do: inspect(any)
 
 end
 

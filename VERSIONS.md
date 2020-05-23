@@ -18,7 +18,7 @@
 
 - smarter defaults for run! and send!
 
-### 0.1.3 
+### 0.1.3
 
 - correct error trapping on connect!
 

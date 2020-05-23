@@ -8,11 +8,25 @@ defmodule SSH.ClientIdentity do
 
   @behaviour :ssh_client_key_api
 
-  @impl true
-  defdelegate add_host_key(host, key, opts), to: :ssh_file
-
-  @impl true
-  defdelegate is_host_key(key, host, alg, opts), to: :ssh_file
+  # SUPPORT SKEW IN THE SSH API ACROSS OTP RELEASES.
+  case :otp_release |> :erlang.system_info |> :string.to_integer do
+    {n, []} when n >= 23 ->
+      @impl true
+      defdelegate add_host_key(host, port, key, opts), to: :ssh_file
+      @impl true
+      defdelegate is_host_key(key, host, port, alg, opts), to: :ssh_file
+      defp valid_key(key, algorithm) do
+        :ssh_transport.valid_key_sha_alg(:private, key, algorithm)
+      end
+    _ ->
+      @impl true
+      defdelegate add_host_key(host, key, opts), to: :ssh_file
+      @impl true
+      defdelegate is_host_key(key, host, alg, opts), to: :ssh_file
+      defp valid_key(key, algorithm) do
+        :ssh_transport.valid_key_sha_alg(:key, algorithm)
+      end
+  end
 
   @impl true
   @spec user_key(:ssh.pubkey_alg, keyword) ::
@@ -32,7 +46,7 @@ defmodule SSH.ClientIdentity do
          identity when not is_nil(identity) <- Keyword.get(prv_opts, :identity),
          {:ok, pem_bin}                     <- File.read(identity),
          {:ok, key}                         <- decode(pem_bin, password),
-         true                    <- :ssh_transport.valid_key_sha_alg(key, algorithm) do
+         true                               <- valid_key(key, algorithm) do
       {:ok, key}
     else
       nil ->   {:error, :bad_options}
