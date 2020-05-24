@@ -48,3 +48,7 @@
 ### 0.1.9
 
 - add support for new SSH module changes present in OTP 23
+
+### 0.1.10
+
+- fix typo that affects OTP < 23

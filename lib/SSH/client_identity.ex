@@ -24,7 +24,7 @@ defmodule SSH.ClientIdentity do
       @impl true
       defdelegate is_host_key(key, host, alg, opts), to: :ssh_file
       defp valid_key(key, algorithm) do
-        :ssh_transport.valid_key_sha_alg(:key, algorithm)
+        :ssh_transport.valid_key_sha_alg(key, algorithm)
       end
   end
 
