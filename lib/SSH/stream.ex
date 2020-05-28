@@ -74,7 +74,16 @@ defmodule SSH.Stream do
       options[:init].(
         struct(%__MODULE__{conn: conn, chan: chan, stop_time: stop_time}, options),
         options[:init_param])
+    else
+      :failure ->
+        log_error_for_envs(options[:env])
+        :failure
+      error -> error
     end
+  end
+
+  defp log_error_for_envs(envs) do
+    if envs, do: Logger.warn("did you set AcceptEnv in your ssh daemon?")
   end
 
   #################################################################
@@ -108,7 +117,6 @@ defmodule SSH.Stream do
   @spec make_env(SSH.conn, SSH.chan, keyword | nil) :: :success | :failure | {:error, :closed | :timeout}
   defp make_env(conn, chan, envs) do
     if is_list(envs) do
-      Logger.warn("this is currently unsupported until ERL-1107 is resolved")
       Enum.each(envs, &set_env(conn, chan, &1))
     end
     :success

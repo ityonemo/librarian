@@ -29,7 +29,7 @@
 ### 0.1.5
 
 - enable usage of tty: true in order to stream tty.
-- enable environment variables, but this blocks on [ERL-1107](https://bugs.erlang.org/browse/ERL-1107/)
+- ~~enable environment variables, but this blocks on [ERL-1107](https://bugs.erlang.org/browse/ERL-1107/)~~
 
 ### 0.1.6
 
@@ -52,3 +52,7 @@
 ### 0.1.10
 
 - fix typo that affects OTP < 23
+
+### 0.1.11
+
+- remove warning message on env variable error

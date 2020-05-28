@@ -1,6 +1,7 @@
 defmodule SSHTest.EnvTest do
 
-  # NB this feature is not usable until ERL-1107 is resolved (http://bugs.erlang.org/browse/ERL-1107)
+  # NOTE: this test can't be run unless you have
+  # AcceptEnv set in your ssh daemon.
 
   #use ExUnit.Case, async: true
 
