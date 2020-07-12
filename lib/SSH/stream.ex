@@ -434,6 +434,9 @@ defmodule SSH.Stream do
       {stream, &collector/2}
     end
 
+    defp collector(%{error: error}, _) when not is_nil(error) do
+      raise "#{error}"
+    end
     defp collector(stream, {:cont, content}) do
       case :ssh_connection.send(stream.conn, stream.chan, content) do
         :ok -> stream
