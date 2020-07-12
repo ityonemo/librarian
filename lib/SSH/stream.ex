@@ -14,7 +14,7 @@ defmodule SSH.Stream do
 
   @enforce_keys [:conn, :chan, :stop_time, :cmd]
   defstruct @enforce_keys ++ [
-    :on_stdout, :on_stderr, :on_timeout, :on_finish,
+    :on_init, :on_stdout, :on_stderr, :on_timeout, :on_finish,
     :fds, :data,
     exit_code: 0,
     stream_control_messages: false,
@@ -35,6 +35,7 @@ defmodule SSH.Stream do
     exit_code: non_neg_integer,
     stream_control_messages: boolean,
     halt: boolean,
+    on_init: (t -> t),
     on_stdout: process_fn,
     on_stderr: process_fn,
     on_timeout: (t -> {list, t}),
@@ -54,9 +55,8 @@ defmodule SSH.Stream do
     options = [ #default options
       init:                    &default_init/2,
       conn_timeout:            options[:timeout] || :infinity,
-      data_timeout:            :infinity,
-      stream_control_messages: false,
       fds:                     fds_for(options),
+      on_init:                 &Function.identity/1,
       on_stdout:               get_processor(options[:stdout] || default_stdout, :stdout),
       on_stderr:               get_processor(options[:stderr], :stderr),
       on_timeout:              options[:on_timeout] || &default_timeout/1,

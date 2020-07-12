@@ -30,9 +30,9 @@ defmodule SSHTest.SCPTest do
     File.rm_rf!(@tmp_ssh_big_file)
     File.rm_rf!(@tmp_ssh_big_sent)
 
-    fn -> <<Enum.random(0..255)>> end
+    fn -> :crypto.strong_rand_bytes(1024) end
     |> Stream.repeatedly
-    |> Stream.take(1024 * 1024) # 1 MB
+    |> Stream.take(1024) # 1 MB
     |> Enum.into(File.stream!(@tmp_ssh_big_file))
 
     src_bin = File.read!(@tmp_ssh_big_file)
@@ -50,4 +50,63 @@ defmodule SSHTest.SCPTest do
     File.rm_rf!(@tmp_ssh_big_file)
     File.rm_rf!(@tmp_ssh_big_sent)
   end
+
+  @scptxt1 "/tmp/scp_test_1.txt"
+  test "streaming a list to stdin over the connection is possible" do
+    File.rm_rf!(@scptxt1)
+
+    "localhost"
+    |> SSH.connect!
+    |> SSH.send!(["foo", "bar"], @scptxt1)
+
+    Process.sleep(100)
+
+    assert "foobar" == File.read!(@scptxt1)
+  end
+
+  @scptxt2 "/tmp/scp_test_2.txt"
+  test "streaming an improper list to stdin over the connection is possible" do
+    File.rm_rf!(@scptxt2)
+
+    "localhost"
+    |> SSH.connect!
+    |> SSH.send!(["foo" | "bar"], @scptxt2)
+
+    Process.sleep(100)
+
+    assert "foobar" == File.read!(@scptxt2)
+  end
+
+  @scptxt3_src "/tmp/scp_test_3_src"
+  @scptxt3_dst "/tmp/scp_test_3_dst"
+  @tag :one
+  test "streaming a file over the connection is possible" do
+    File.rm_rf!(@scptxt3_src)
+    File.rm_rf!(@scptxt3_src)
+
+    #fn -> :crypto.strong_rand_bytes(1024) end
+    #|> Stream.repeatedly
+    #|> Stream.take(10) # 10 KB
+    #|> Enum.into(File.stream!(@scptxt3_src))
+
+    File.write(@scptxt3_src, "foo")
+
+    File.read!(@scptxt3_src)
+    |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
+    |> Base.encode64
+    |> IO.inspect(label: "95")
+
+    "localhost"
+    |> SSH.connect!
+    |> SSH.send!(File.stream!(@scptxt3_src, [], 1024), @scptxt3_dst)
+
+    Process.sleep(100)
+
+    File.read!(@scptxt3_dst) |> IO.inspect(label: "104")
+    |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
+    |> Base.encode64
+    |> IO.inspect(label: "95")
+
+  end
+
 end

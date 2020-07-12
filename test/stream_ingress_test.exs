@@ -2,7 +2,6 @@ defmodule SSHTest.StreamIngressTest do
   use ExUnit.Case, async: true
 
   @footxt "/tmp/foo.txt"
-  @tag :one
   test "streaming to stdin over the connection is possible" do
     File.rm_rf!(@footxt)
 
@@ -19,7 +18,6 @@ defmodule SSHTest.StreamIngressTest do
     assert "3" == output
   end
 
-  @tag :two
   test "streaming into a ssh stream as a collectible will throw." do
     File.rm_rf!(@footxt)
 
