@@ -77,6 +77,17 @@ defmodule SSHTest.SCPTest do
     assert "foobar" == File.read!(@scptxt2)
   end
 
+  @invalid_file "/this-is-not-a-writable-file"
+  test "streaming content to a bad file is possible" do
+    assert_raise SSH.SCP.Error,
+      "error executing SCP send: scp: /this-is-not-a-writable-file: Permission denied\n",
+      fn ->
+        "localhost"
+        |> SSH.connect!
+        |> SSH.send!("foo", @invalid_file)
+      end
+  end
+
   # STILL ASPIRATIONAL.  To be implemented in the future.
   #@scptxt3_src "/tmp/scp_test_3_src"
   #@scptxt3_dst "/tmp/scp_test_3_dst"

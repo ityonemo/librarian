@@ -56,3 +56,7 @@
 ### 0.1.11
 
 - remove warning message on env variable error
+
+### 0.1.12
+
+- allow Enum.into to error out when return code 0 function is run
