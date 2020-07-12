@@ -431,17 +431,21 @@ defmodule SSH.Stream do
     @type continuation :: {:cont, String.t} | :done | :halt
     @spec into(stream) :: {stream, (stream, continuation -> stream | :ok)}
     def into(stream) do
-      collector_fun = fn
-        str, {:cont, content} ->
-          :ssh_connection.send(str.conn, str.chan, content)
-          str
-        str, :done ->
-          :ssh_connection.send_eof(str.conn, str.chan)
-          str
-        _set, :halt -> :ok
-      end
-
-      {stream, collector_fun}
+      {stream, &collector/2}
     end
+
+    defp collector(stream, {:cont, content}) do
+      case :ssh_connection.send(stream.conn, stream.chan, content) do
+        :ok -> stream
+        {:error, reason} -> raise "#{reason}"
+      end
+    end
+    defp collector(stream, :done) do
+      case :ssh_connection.send_eof(stream.conn, stream.chan) do
+        :ok -> stream
+        {:error, reason} -> raise "#{reason}"
+      end
+    end
+    defp collector(stream, :halt), do: stream
   end
 end
