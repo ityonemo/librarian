@@ -1,4 +1,4 @@
-defmodule SSHTest.SCPTest do
+ defmodule SSHTest.SCPTest do
   use ExUnit.Case, async: true
 
   @moduletag :scp
@@ -75,6 +75,22 @@ defmodule SSHTest.SCPTest do
     Process.sleep(100)
 
     assert "foobar" == File.read!(@scptxt2)
+  end
+
+  @scptxt3 "/tmp/scp_test_3"
+  test "permissions are correctly set (issue 22)" do
+    File.rm_rf!(@scptxt3)
+
+    "localhost"
+    |> SSH.connect!
+    |> SSH.send!("#!/bin/sh\necho foo", @scptxt3, permissions: 0o777)
+
+    Process.sleep(100)
+
+    # make sure it's executable
+    assert {_, 0} = System.cmd("test", ["-x", @scptxt3])
+    # really make sure
+    assert {"foo" <> _, 0} = System.cmd(@scptxt3, [])
   end
 
   @invalid_file "/this-is-not-a-writable-file"
