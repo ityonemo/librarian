@@ -65,6 +65,7 @@ defmodule SSHTest.SCPTest do
   end
 
   @scptxt2 "/tmp/scp_test_2.txt"
+  @tag :two
   test "streaming an improper list to stdin over the connection is possible" do
     File.rm_rf!(@scptxt2)
 

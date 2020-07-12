@@ -56,7 +56,6 @@ defmodule SSH.Stream do
       init:                    &default_init/2,
       conn_timeout:            options[:timeout] || :infinity,
       fds:                     fds_for(options),
-      on_init:                 &Function.identity/1,
       on_stdout:               get_processor(options[:stdout] || default_stdout, :stdout),
       on_stderr:               get_processor(options[:stderr], :stderr),
       on_timeout:              options[:on_timeout] || &default_timeout/1,
