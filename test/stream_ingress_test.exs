@@ -27,11 +27,12 @@ defmodule SSHTest.StreamIngressTest do
     |> SSH.connect!
     |> SSH.stream!("tee /this-is-not-a-valid-file")
 
-    assert_raise RuntimeError, "", fn ->
-      ["foo"]
-      |> Enum.into(ssh_stream)
-      |> Enum.to_list
-    end
+    assert_raise SSH.RunError, "command `tee /this-is-not-a-valid-file` errored with retcode 1",
+      fn ->
+        ["foo"]
+        |> Enum.into(ssh_stream)
+        |> Enum.to_list
+      end
   end
 
 end
