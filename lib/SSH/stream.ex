@@ -108,7 +108,7 @@ defmodule SSH.Stream do
     end
   end
 
-  defp default_tty_options() do
+  defp default_tty_options do
     cols = case :io.columns() do
       {:ok, cols} -> cols
       _ -> 80
