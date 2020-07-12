@@ -56,3 +56,11 @@
 ### 0.1.11
 
 - remove warning message on env variable error
+
+### 0.1.12
+
+- allow Enum.into to error out when nonzero return code function is run
+
+### 0.2.0
+
+- allow file and generic streaming into scp streams

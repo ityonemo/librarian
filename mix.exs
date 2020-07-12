@@ -4,7 +4,7 @@ defmodule Librarian.MixProject do
   def project do
     [
       app: :librarian,
-      version: "0.1.11",
+      version: "0.1.12",
       elixir: "~> 1.9",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -30,10 +30,10 @@ defmodule Librarian.MixProject do
 
   defp deps do
     [
-      {:credo, "~> 1.1", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.21.2", only: :dev, runtime: false},
-      {:excoveralls, "~> 0.11", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 0.5", only: :dev, runtime: false}
+      {:credo, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.22", only: :dev, runtime: false},
+      {:excoveralls, "~> 0.13", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.0", only: :dev, runtime: false}
     ]
   end
 end

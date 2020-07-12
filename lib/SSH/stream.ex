@@ -12,8 +12,11 @@ defmodule SSH.Stream do
   require Logger
   @logger_metadata Application.get_env(:librarian, :ssh_metadata, [ssh: true])
 
-  @enforce_keys [:conn, :chan, :stop_time]
-  defstruct [:conn, :chan, :on_stdout, :on_stderr, :on_timeout, :stop_time, :fds, :data,
+  @enforce_keys [:conn, :chan, :stop_time, :cmd]
+  defstruct @enforce_keys ++ [
+    :on_init, :on_stdout, :on_stderr, :on_timeout, :on_finish,
+    :fds, :data,
+    exit_code: 0,
     stream_control_messages: false,
     halt: false,
     data_timeout: :infinity,
@@ -27,12 +30,16 @@ defmodule SSH.Stream do
     conn: SSH.conn,
     chan: SSH.chan,
     stop_time: DateTime.t,
+    cmd: String.t,
     fds: [],
+    exit_code: non_neg_integer,
     stream_control_messages: boolean,
     halt: boolean,
+    on_init: (t -> t),
     on_stdout: process_fn,
     on_stderr: process_fn,
     on_timeout: (t -> {list, t}),
+    on_finish: (t -> t),
     data_timeout: timeout,
     data: any
   }
@@ -48,12 +55,11 @@ defmodule SSH.Stream do
     options = [ #default options
       init:                    &default_init/2,
       conn_timeout:            options[:timeout] || :infinity,
-      data_timeout:            :infinity,
-      stream_control_messages: false,
       fds:                     fds_for(options),
       on_stdout:               get_processor(options[:stdout] || default_stdout, :stdout),
       on_stderr:               get_processor(options[:stderr], :stderr),
-      on_timeout:              options[:on_timeout] || &default_timeout/1]
+      on_timeout:              options[:on_timeout] || &default_timeout/1,
+      on_finish:               &Function.identity/1]
     |> Keyword.merge(options)
     |> Keyword.merge(module_overlay(options[:module]))
 
@@ -72,7 +78,7 @@ defmodule SSH.Stream do
          :success    <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
 
       options[:init].(
-        struct(%__MODULE__{conn: conn, chan: chan, stop_time: stop_time}, options),
+        struct(__MODULE__, [conn: conn, chan: chan, stop_time: stop_time] ++ options),
         options[:init_param])
     else
       :failure ->
@@ -102,7 +108,7 @@ defmodule SSH.Stream do
     end
   end
 
-  defp default_tty_options() do
+  defp default_tty_options do
     cols = case :io.columns() do
       {:ok, cols} -> cols
       _ -> 80
@@ -295,7 +301,10 @@ defmodule SSH.Stream do
     {[], stream}
   end
   defp process_message(stream = %{chan: chan}, {:exit_status, chan, status}) do
-    {filter_control_tokens(stream, {:retval, status}), stream}
+    {
+      filter_control_tokens(stream, {:retval, status}),
+      %{stream | exit_code: status}
+    }
   end
   defp process_message(stream = %{chan: chan}, {:closed, chan}) do
     {:halt, stream}
@@ -336,10 +345,12 @@ defmodule SSH.Stream do
   ## stream iteration: last_stream
 
   @doc false
-  @spec last_stream(t) :: :ok
+  @spec last_stream(t) :: t
   def last_stream(stream) do
-    drain(stream)
-
+    stream
+    |> stream.on_finish.()
+    |> drain()
+  after
     # close out our file descriptors
     if stream.fds do
       Enum.each(stream.fds, fn {_, fd} -> File.close(fd) end)
@@ -431,17 +442,27 @@ defmodule SSH.Stream do
     @type continuation :: {:cont, String.t} | :done | :halt
     @spec into(stream) :: {stream, (stream, continuation -> stream | :ok)}
     def into(stream) do
-      collector_fun = fn
-        str, {:cont, content} ->
-          :ssh_connection.send(str.conn, str.chan, content)
-          str
-        str, :done ->
-          :ssh_connection.send_eof(str.conn, str.chan)
-          str
-        _set, :halt -> :ok
-      end
-
-      {stream, collector_fun}
+      # drop in an on_finish hook which will do the proper raising.
+      {%{stream | on_finish: &on_finish/1}, &collector/2}
     end
+
+    defp collector(stream, {:cont, content}) do
+      case :ssh_connection.send(stream.conn, stream.chan, content) do
+        :ok -> stream
+        {:error, reason} -> raise "#{reason}"
+      end
+    end
+    defp collector(stream, :done) do
+      case :ssh_connection.send_eof(stream.conn, stream.chan) do
+        :ok -> stream
+        {:error, reason} -> raise "#{reason}"
+      end
+    end
+    defp collector(stream, :halt), do: stream
+
+    defp on_finish(%{cmd: cmd, exit_code: code}) when code != 0 do
+      raise SSH.RunError, "command `#{cmd}` errored with retcode #{code}"
+    end
+    defp on_finish(stream), do: stream
   end
 end
