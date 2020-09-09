@@ -389,7 +389,8 @@ defmodule SSH.Stream do
   @doc """
   sends an iodata payload to the stdin of the ssh stream
 
-  You should use this method inside of stderr, stdout, and data_timeout
+  You should use this method inside of `c:SSH.ModuleApi.on_stderr/2`,
+  `c:SSH.ModuleApi.on_stdout/2`, and `c:SSH.ModuleApi.on_timeout/1`
   functions when you're designing interactive ssh handlers.  Note that this
   function must be called from within the same process that the stream is
   running on, while the stream is running.
@@ -406,7 +407,8 @@ defmodule SSH.Stream do
   @doc """
   sends an end-of-file to the the ssh stream.
 
-  You should use this method inside of stderr, stdout, and data_timeout
+  You should use this method inside of `c:SSH.ModuleApi.on_stderr/2`,
+  `c:SSH.ModuleApi.on_stdout/2`, and `c:SSH.ModuleApi.on_timeout/1`
   functions when you're designing interactive ssh handlers.  Note that this
   function must be called from within the same process that the stream is
   running on, while the stream is running.

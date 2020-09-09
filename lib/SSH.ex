@@ -26,6 +26,29 @@ defmodule SSH do
   SSH.run!(conn, "echo hello ssh")  # ==> "hello ssh"
   ```
 
+  ## Using SCP
+
+  This library also provides `send!/4` and `fetch!/3` functions which let you
+  perform SCP operations via the SSH streams.
+
+  ```elixir
+  {:ok, conn} = SSH.connect("some.other.server")
+  SSH.send!(conn, binary_or_filestream, "path/to/destination.file")
+  ```
+
+  ```elixir
+  {:ok, conn} = SSH.connect("some.other.server")
+  SSH.fetch!(conn, "path/to/source.file")
+  |> Enum.map(&do_something_with_chunks/1)
+  ```
+
+  ### Important
+
+  If you are performing a streaming SCP send, you may only pass a filestream
+  or a stream-of-a-filestream into the `send!/3` function.  If you are
+  streaming your filestream through other stream operators make sure that the
+  total file size remains unchanged.
+
   ## Bang vs non-bang functions
 
   As a general rule, if you expect to run a single or series of tasks with
@@ -92,7 +115,6 @@ defmodule SSH do
   #############################################################################
   ## connection and stream handling
 
-  @typedoc false
   @type connect_result :: {:ok, SSH.conn} | {:error, any}
 
   @doc """
@@ -285,10 +307,8 @@ defmodule SSH do
   @typedoc "unix-style return codes for ssh-executed functions"
   @type retval :: 0..255
 
-  @typedoc false
   @type run_content :: iodata | {String.t, String.t}
 
-  @typedoc false
   @type run_result :: {:ok, run_content, retval} | {:error, term}
 
   @doc """
@@ -429,7 +449,6 @@ defmodule SSH do
   #############################################################################
   ## SCP MODE: sending
 
-  @typedoc false
   @type send_result :: :ok | {:error, term}
 
   @type filestreams :: %Stream{enum: %File.Stream{}}
@@ -461,8 +480,28 @@ defmodule SSH do
   @impl true
   @spec send(conn, iodata | filestreams, Path.t, keyword) :: send_result
   def send(conn, stream, remote_file, options \\ [])
-  def send(conn, stream = %_{}, remote_file, options) do
-    SCP.Stream.consume_stream(conn, stream, remote_file, options)
+  def send(conn, src_stream = %_{}, remote_file, options) do
+    size = find_size_of(src_stream)
+    perms = Keyword.get(options, :permissions, 0o644)
+
+    file_id = Path.basename(remote_file)
+
+    case SSH.Stream.__build__(conn,
+        cmd: "scp -t #{remote_file}",
+        module: {SSH.SCP.Stream, {Path.basename(remote_file), size, perms}},
+        data_timeout: 500,
+        prerun_fn: &SSH.SCP.Stream.scp_init(&1, &2, "C0#{Integer.to_string(perms, 8)} #{size} #{file_id}\n"),
+        on_finish: &Function.identity/1,
+        on_stream_done: &SSH.SCP.Stream.on_stream_done/1) do
+
+      {:ok, ssh_stream} ->
+
+        src_stream
+        |> Enum.into(ssh_stream)
+        |> Stream.run
+
+      error -> error
+    end
   end
   def send(conn, content, remote_file, options) do
     perms = Keyword.get(options, :permissions, 0o644)
@@ -479,6 +518,15 @@ defmodule SSH do
     end
   end
 
+  defp find_size_of(%Stream{enum: fstream = %File.Stream{}}) do
+    find_size_of(fstream)
+  end
+  defp find_size_of(fstream = %File.Stream{}) do
+    case File.stat(fstream.path) do
+      {:ok, stat} -> stat.size
+      _ -> raise SSH.SCP.Error, "error getting file size for #{fstream.path}"
+    end
+  end
   @doc """
   like `send/4`, except raises on errors, instead of returning an error tuple.
   """
@@ -496,7 +544,6 @@ defmodule SSH do
   #############################################################################
   ## SCP MODE: fetching
 
-  @typedoc false
   @type fetch_result :: {:ok, binary} | {:error, term}
 
   @doc """
@@ -546,7 +593,6 @@ defmodule SSH do
   defp error_fmt(atom) when is_atom(atom), do: atom
   defp error_fmt(binary) when is_binary(binary), do: binary
   defp error_fmt(any), do: inspect(any)
-
 end
 
 defmodule SSH.StreamError do

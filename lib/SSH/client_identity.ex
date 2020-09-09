@@ -1,9 +1,10 @@
 defmodule SSH.ClientIdentity do
-
   @moduledoc """
-  implements erlang's `:ssh_client_key_api` behaviour so that you can log in
-  using a pem key, instead of the default id_rsa private/public pair.  It's
-  pretty hard to believe that this is not an option, but there you go.
+  Implements erlang's `:ssh_client_key_api` behaviour so that you can log in
+  using a pem key, instead of the default `.ssh/id_rsa` private/public pair.
+
+  It's pretty hard to believe that this is not a stock option in erlang SSH,
+  but there you go.
   """
 
   @behaviour :ssh_client_key_api

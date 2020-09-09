@@ -39,8 +39,8 @@ defmodule SSH.Key do
 
   returns `{public_key, private_key}`
 
-  As is expected by openssh, the public_key is ssh-encoded and the
-  private_key is pem-encoded.
+  As is expected by openssh, the `public_key` is ssh-encoded and the
+  `private_key` is pem-encoded.
 
   ## options
   - `:size` - sets the bit size.  for rsa, this can be 2048 or 4096

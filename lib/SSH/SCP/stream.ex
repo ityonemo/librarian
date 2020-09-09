@@ -1,5 +1,13 @@
-defmodule SCP.Stream do
-  # handles streaming SCP.
+defmodule SSH.SCP.Stream do
+  @moduledoc """
+  implements the data transactions involved in streaming a file to
+  the the destination server.
+
+  Concretely, the following functions are implemented:
+  - `init/2`, for `c:SSH.ModuleApi.init/2`
+  - `on_stdout/2`, for `c:SSH.ModuleApi.on_stdout/2`
+  - `on_stderr/2`, for `c:SSH.ModuleApi.on_stderr/2`
+  """
 
   defstruct [:total, so_far: 0, finished: false]
 
@@ -7,43 +15,8 @@ defmodule SCP.Stream do
 
   @behaviour SSH.ModuleApi
 
-  def consume_stream(conn, fstream = %File.Stream{}, remote_file, options) do
-    size = File.stat!(fstream.path).size
-    consume_stream(conn, fstream, size, remote_file, options)
-  end
-  def consume_stream(conn,
-        src_stream = %Stream{enum: fstream = %File.Stream{}},
-        remote_file,
-        options) do
-
-    size = File.stat!(fstream.path).size
-    consume_stream(conn, src_stream, size, remote_file, options)
-  end
-
-  def consume_stream(conn, src_stream, size, remote_file, options) do
-    perms = Keyword.get(options, :permissions, 0o644)
-
-    file_id = Path.basename(remote_file)
-
-    case SSH.Stream.__build__(conn,
-        cmd: "scp -t #{remote_file}",
-        module: {__MODULE__, {Path.basename(remote_file), size, perms}},
-        data_timeout: 500,
-        prerun_fn: &scp_init(&1, &2, "C0#{Integer.to_string(perms, 8)} #{size} #{file_id}\n"),
-        on_finish: &Function.identity/1,
-        on_stream_done: &on_stream_done/1) do
-
-      {:ok, ssh_stream} ->
-
-        src_stream
-        |> Enum.into(ssh_stream)
-        |> Stream.run
-
-      error -> error
-    end
-  end
-
-  defp scp_init(conn, chan, init_invocation) do
+  @doc false
+  def scp_init(conn, chan, init_invocation) do
     :ssh_connection.send(conn, chan, init_invocation)
     receive do
       {:ssh_cm, ^conn, {:data, ^chan, 0, content}} ->
@@ -112,10 +85,11 @@ defmodule SCP.Stream do
     {[], stream}
   end
 
-  defp on_stream_done(stream = %{data: :finished}) do
+  @doc false
+  def on_stream_done(stream = %{data: :finished}) do
     SSH.Stream.send_eof(stream)
   end
-  defp on_stream_done(stream = %{conn: conn, chan: chan}) do
+  def on_stream_done(stream = %{conn: conn, chan: chan}) do
     receive do
       {:ssh_cm, ^conn, {:data, ^chan, 0, <<0>>}} ->
         SSH.Stream.send_eof(stream)

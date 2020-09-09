@@ -1,7 +1,7 @@
 defmodule SSH.SCP.Send do
   @moduledoc """
-  implements the data transactions involved in a SCP file transfer to the
-  destination server.
+  implements the data transactions involved in unstreamed SCP file transfer
+  to the destination server.
 
   Concretely, the following functions are implemented:
   - `init/2`, for `c:SSH.ModuleApi.init/2`
@@ -42,7 +42,7 @@ defmodule SSH.SCP.Send do
   end
 
   @doc """
-  responds to information returned on the `stdout` channel
+  responds to information returned on the `stdout` stream
   by the `scp -t` command.
 
   As per the protocol the following binary responses can be expected:
@@ -95,7 +95,7 @@ defmodule SSH.SCP.Send do
   end
 
   @doc """
-  responds to information returned on the `stderr` channel by the
+  responds to information returned on the `stderr` stream by the
   `scp -t` command.
 
   These strings will be saved to the stream as part of an `{:stderr, data}`
@@ -106,7 +106,7 @@ defmodule SSH.SCP.Send do
   def on_stderr(string, stream), do: {[stderr: string], stream}
 
   @doc """
-  handles the host scp not calling back
+  handles the host `scp` agent not calling back
 
   sometimes, the other side will forget to send a packet.  In those
   cases, send a `<<0>>` packet down the SSH as reminder that we're still
@@ -139,5 +139,5 @@ defmodule SSH.SCP.Send do
     IO.write(:stderr, stderr)
     acc
   end
-  def reducer(x, acc), do: acc
+  def reducer(_any, acc), do: acc
 end
