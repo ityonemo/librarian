@@ -14,7 +14,7 @@ defmodule SSH.Stream do
 
   @enforce_keys [:conn, :chan, :stop_time, :cmd]
   defstruct @enforce_keys ++ [
-    :on_init, :on_stdout, :on_stderr, :on_timeout, :on_finish,
+    :on_init, :on_stdout, :on_stderr, :on_timeout, :on_stream_done, :on_finish,
     :fds, :data,
     exit_code: 0,
     stream_control_messages: false,
@@ -39,6 +39,7 @@ defmodule SSH.Stream do
     on_stdout: process_fn,
     on_stderr: process_fn,
     on_timeout: (t -> {list, t}),
+    on_stream_done: (t -> :ok | {:error, any}),
     on_finish: (t -> t),
     data_timeout: timeout,
     data: any
@@ -58,8 +59,7 @@ defmodule SSH.Stream do
       fds:                     fds_for(options),
       on_stdout:               get_processor(options[:stdout] || default_stdout, :stdout),
       on_stderr:               get_processor(options[:stderr], :stderr),
-      on_timeout:              options[:on_timeout] || &default_timeout/1,
-      on_finish:               &Function.identity/1]
+      on_timeout:              options[:on_timeout] || &default_timeout/1]
     |> Keyword.merge(options)
     |> Keyword.merge(module_overlay(options[:module]))
 
@@ -75,11 +75,13 @@ defmodule SSH.Stream do
     with {:ok, chan} <- :ssh_connection.session_channel(conn, timeout),
          :success    <- make_tty(conn, chan, options[:tty]),
          :success    <- make_env(conn, chan, options[:env]),
-         :success    <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout) do
+         :success    <- :ssh_connection.exec(conn, chan, String.to_charlist(options[:cmd]), timeout),
+         :success    <- perform_prerun(conn, chan, options[:prerun_fn]) do
 
       options[:init].(
         struct(__MODULE__, [conn: conn, chan: chan, stop_time: stop_time] ++ options),
         options[:init_param])
+
     else
       :failure ->
         log_error_for_envs(options[:env])
@@ -145,6 +147,9 @@ defmodule SSH.Stream do
   end
 
   defp set_env(_, _, _), do: raise ArgumentError, "invalid input for :env parameter"
+
+  defp perform_prerun(_conn, _chan, nil), do: :success
+  defp perform_prerun(conn, chan, prerun_fn), do: prerun_fn.(conn, chan)
 
   #################################################################
   ## initialization: handler lambda selection
@@ -248,7 +253,6 @@ defmodule SSH.Stream do
           "unexpected connection: #{inspect wrong_conn}")
 
       after timeout ->
-        {conn, timeout, timeout_mode}
         case timeout_mode do
           :global -> {[error: :timeout], %{stream | halt: true}}
           :data -> stream.on_timeout.(stream)
@@ -347,9 +351,13 @@ defmodule SSH.Stream do
   @doc false
   @spec last_stream(t) :: t
   def last_stream(stream) do
-    stream
-    |> stream.on_finish.()
-    |> drain()
+    if stream.on_finish do
+      stream
+      |> stream.on_finish.()
+      |> drain
+    else
+      drain(stream)
+    end
   after
     # close out our file descriptors
     if stream.fds do
@@ -443,8 +451,13 @@ defmodule SSH.Stream do
     @spec into(stream) :: {stream, (stream, continuation -> stream | :ok)}
     def into(stream) do
       # drop in an on_finish hook which will do the proper raising.
-      {%{stream | on_finish: &on_finish/1}, &collector/2}
+      {add_on_finish(stream), &collector/2}
     end
+
+    defp add_on_finish(stream = %{on_finish: nil}) do
+      %{stream | on_finish: &on_finish/1}
+    end
+    defp add_on_finish(stream), do: stream
 
     defp collector(stream, {:cont, content}) do
       case :ssh_connection.send(stream.conn, stream.chan, content) do
@@ -453,15 +466,23 @@ defmodule SSH.Stream do
       end
     end
     defp collector(stream, :done) do
-      case :ssh_connection.send_eof(stream.conn, stream.chan) do
-        :ok -> stream
+      with :ok <- on_stream_done(stream),
+           :ok <- :ssh_connection.send_eof(stream.conn, stream.chan) do
+        stream
+      else
         {:error, reason} -> raise "#{reason}"
       end
     end
     defp collector(stream, :halt), do: stream
 
-    defp on_finish(%{cmd: cmd, exit_code: code}) when code != 0 do
+    defp on_stream_done(%{on_stream_done: nil}), do: :ok
+    defp on_stream_done(stream = %{on_stream_done: on_stream_done}) do
+      on_stream_done.(stream)
+    end
+
+    defp on_finish(stream = %{cmd: cmd, exit_code: code}) when code != 0 do
       raise SSH.RunError, "command `#{cmd}` errored with retcode #{code}"
+      stream
     end
     defp on_finish(stream), do: stream
   end

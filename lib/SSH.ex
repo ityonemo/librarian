@@ -432,6 +432,9 @@ defmodule SSH do
   @typedoc false
   @type send_result :: :ok | {:error, term}
 
+  @type filestreams :: %Stream{enum: %File.Stream{}}
+    | %File.Stream{}
+
   @doc """
   sends binary content to the remote host.
 
@@ -456,8 +459,12 @@ defmodule SSH do
   ```
   """
   @impl true
-  @spec send(conn, iodata, Path.t, keyword) :: send_result
-  def send(conn, content, remote_file, options \\ []) do
+  @spec send(conn, iodata | filestreams, Path.t, keyword) :: send_result
+  def send(conn, stream, remote_file, options \\ [])
+  def send(conn, stream = %_{}, remote_file, options) do
+    SCP.Stream.consume_stream(conn, stream, remote_file, options)
+  end
+  def send(conn, content, remote_file, options) do
     perms = Keyword.get(options, :permissions, 0o644)
     filename = Path.basename(remote_file)
     initializer = {filename, content, perms}

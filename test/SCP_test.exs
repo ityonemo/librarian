@@ -105,33 +105,34 @@
   end
 
   # STILL ASPIRATIONAL.  To be implemented in the future.
-  #@scptxt3_src "/tmp/scp_test_3_src"
-  #@scptxt3_dst "/tmp/scp_test_3_dst"
-  #@tag :one
-  #test "streaming a file over the connection is possible" do
-  #  File.rm_rf!(@scptxt3_src)
-  #  File.rm_rf!(@scptxt3_src)
-#
-  #  #fn -> :crypto.strong_rand_bytes(1024) end
-  #  #|> Stream.repeatedly
-  #  #|> Stream.take(10) # 10 KB
-  #  #|> Enum.into(File.stream!(@scptxt3_src))
-#
-  #  File.write(@scptxt3_src, "foo")
-#
-  #  File.read!(@scptxt3_src)
-  #  |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
-  #  |> Base.encode64
-#
-  #  "localhost"
-  #  |> SSH.connect!
-  #  |> SSH.send!(File.stream!(@scptxt3_src, [], 1024), @scptxt3_dst)
-#
-  #  Process.sleep(100)
-#
-  #  File.read!(@scptxt3_dst)
-  #  |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
-  #  |> Base.encode64
-  #end
+  @scptxt3_src "/tmp/scp_test_3_src"
+  @scptxt3_dst "/tmp/scp_test_3_dst"
+  test "streaming a file over the connection is possible" do
+    File.rm_rf!(@scptxt3_src)
+    File.rm_rf!(@scptxt3_src)
+
+    fn -> :crypto.strong_rand_bytes(1024) end
+    |> Stream.repeatedly
+    |> Stream.take(10) # 10 KB
+    |> Enum.into(File.stream!(@scptxt3_src))
+
+    src_hash = File.read!(@scptxt3_src)
+    |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
+    |> Base.encode64
+
+    fstream = File.stream!(@scptxt3_src, [], 1024)
+
+    "localhost"
+    |> SSH.connect!
+    |> SSH.send!(fstream, @scptxt3_dst)
+
+    Process.sleep(100)
+
+    dst_hash = File.read!(@scptxt3_dst)
+    |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
+    |> Base.encode64
+
+    assert src_hash == dst_hash
+  end
 
 end
