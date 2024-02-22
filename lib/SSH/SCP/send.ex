@@ -10,7 +10,7 @@ defmodule SSH.SCP.Send do
   """
 
   require Logger
-  @logger_metadata Application.get_env(:librarian, :scp_metadata, [scp: true])
+  @logger_metadata Application.compile_env(:librarian, :scp_metadata, scp: true)
 
   @behaviour SSH.ModuleApi
 
@@ -31,13 +31,16 @@ defmodule SSH.SCP.Send do
 
   """
   @impl true
-  @spec init(SSH.Stream.t, {Path.t, String.t | iodata, integer}) :: {:ok, SSH.Stream.t}
+  @spec init(SSH.Stream.t(), {Path.t(), String.t() | iodata, integer}) :: {:ok, SSH.Stream.t()}
   def init(stream, {filepath, content, perms}) do
     size = find_size(content)
     # in order to kick off the SCP routine, we need to send the commence SCP
     # signal to the current process' message mailbox.
-    SSH.Stream.send_data(stream,
-      "C0#{Integer.to_string(perms, 8)} #{size} #{filepath}\n")
+    SSH.Stream.send_data(
+      stream,
+      "C0#{Integer.to_string(perms, 8)} #{size} #{filepath}\n"
+    )
+
     {:ok, %SSH.Stream{stream | data: content}}
   end
 
@@ -61,24 +64,28 @@ defmodule SSH.SCP.Send do
   errors will send an error tuple.
   """
   @impl true
-  @spec on_stdout(binary, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  @spec on_stdout(binary, SSH.Stream.t()) :: {[term], SSH.Stream.t()}
   def on_stdout(<<0>>, stream = %{data: content})
-        when is_binary(content) or is_list(content) do
+      when is_binary(content) or is_list(content) do
     SSH.Stream.send_data(stream, content)
     {[], %{stream | data: :finished}}
   end
+
   def on_stdout(<<0>>, stream = %{data: :finished}) do
     SSH.Stream.send_eof(stream)
     {[], %{stream | data: :finished}}
   end
+
   def on_stdout(<<0>> <> rest, stream) do
     on_stdout(rest, stream)
   end
+
   def on_stdout(<<1, error::binary>>, stream) do
     SSH.Stream.send_eof(stream)
     Logger.error("error: #{error}", @logger_metadata)
     {[error: error], %{stream | data: :finished}}
   end
+
   def on_stdout(<<2, error::binary>>, stream) do
     # apparently OpenSSH "never sends" fatal error packets.  Just in case the
     # specs change, or client is connecting into a differnt SSH server,
@@ -89,6 +96,7 @@ defmodule SSH.SCP.Send do
     # go ahead and crash the process when this happens
     raise SSH.SCP.FatalError, message: emsg
   end
+
   def on_stdout("", stream) do
     SSH.Stream.send_data(stream, <<0>>)
     {[], stream}
@@ -102,7 +110,7 @@ defmodule SSH.SCP.Send do
   tuple.
   """
   @impl true
-  @spec on_stderr(term, SSH.Stream.t) :: {[term], SSH.Stream.t}
+  @spec on_stderr(term, SSH.Stream.t()) :: {[term], SSH.Stream.t()}
   def on_stderr(string, stream), do: {[stderr: string], stream}
 
   @doc """
@@ -113,7 +121,7 @@ defmodule SSH.SCP.Send do
   here and need a response.
   """
   @impl true
-  @spec on_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
+  @spec on_timeout(SSH.Stream.t()) :: {[], SSH.Stream.t()}
   def on_timeout(stream) do
     SSH.Stream.send_data(stream, <<0>>)
     {[], stream}
@@ -132,12 +140,14 @@ defmodule SSH.SCP.Send do
   `{:error, string}` value, make that the reduced return value.  For
   `{:stderr, string}`, send it to the process's standard error as a side effect.
   """
-  @spec reducer([{:error, term} | {:stderr, String.t}], :ok | {:error, String.t})
-    :: :ok | {:error, String.t}
+  @spec reducer([{:error, term} | {:stderr, String.t()}], :ok | {:error, String.t()}) ::
+          :ok | {:error, String.t()}
   def reducer(error = {:error, _}, :ok), do: error
+
   def reducer({:stderr, stderr}, acc) do
     IO.write(:stderr, stderr)
     acc
   end
+
   def reducer(_any, acc), do: acc
 end

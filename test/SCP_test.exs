@@ -1,4 +1,4 @@
- defmodule SSHTest.SCPTest do
+defmodule SSHTest.SCPTest do
   use ExUnit.Case, async: true
 
   @moduletag :scp
@@ -31,8 +31,9 @@
     File.rm_rf!(@tmp_ssh_big_sent)
 
     fn -> :crypto.strong_rand_bytes(1024) end
-    |> Stream.repeatedly
-    |> Stream.take(1024) # 1 MB
+    |> Stream.repeatedly()
+    # 1 MB
+    |> Stream.take(1024)
     |> Enum.into(File.stream!(@tmp_ssh_big_file))
 
     src_bin = File.read!(@tmp_ssh_big_file)
@@ -40,7 +41,7 @@
     hash = :crypto.hash(:sha256, src_bin)
 
     "localhost"
-    |> SSH.connect!
+    |> SSH.connect!()
     |> SSH.send!(src_bin, @tmp_ssh_big_sent)
 
     res_bin = File.read!(@tmp_ssh_big_sent)
@@ -56,7 +57,7 @@
     File.rm_rf!(@scptxt1)
 
     "localhost"
-    |> SSH.connect!
+    |> SSH.connect!()
     |> SSH.send!(["foo", "bar"], @scptxt1)
 
     Process.sleep(100)
@@ -69,7 +70,7 @@
     File.rm_rf!(@scptxt2)
 
     "localhost"
-    |> SSH.connect!
+    |> SSH.connect!()
     |> SSH.send!(["foo" | "bar"], @scptxt2)
 
     Process.sleep(100)
@@ -82,7 +83,7 @@
     File.rm_rf!(@scptxt3)
 
     "localhost"
-    |> SSH.connect!
+    |> SSH.connect!()
     |> SSH.send!("#!/bin/sh\necho foo", @scptxt3, permissions: 0o777)
 
     Process.sleep(100)
@@ -96,12 +97,12 @@
   @invalid_file "/this-is-not-a-writable-file"
   test "streaming content to a bad file is possible" do
     assert_raise SSH.SCP.Error,
-      "error executing SCP send: scp: /this-is-not-a-writable-file: Permission denied\n",
-      fn ->
-        "localhost"
-        |> SSH.connect!
-        |> SSH.send!("foo", @invalid_file)
-      end
+                 "error executing SCP send: scp: /this-is-not-a-writable-file: Permission denied\n",
+                 fn ->
+                   "localhost"
+                   |> SSH.connect!()
+                   |> SSH.send!("foo", @invalid_file)
+                 end
   end
 
   # STILL ASPIRATIONAL.  To be implemented in the future.
@@ -112,27 +113,29 @@
     File.rm_rf!(@scptxt3_src)
 
     fn -> :crypto.strong_rand_bytes(1024) end
-    |> Stream.repeatedly
-    |> Stream.take(10) # 10 KB
+    |> Stream.repeatedly()
+    # 10 KB
+    |> Stream.take(10)
     |> Enum.into(File.stream!(@scptxt3_src))
 
-    src_hash = File.read!(@scptxt3_src)
-    |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
-    |> Base.encode64
+    src_hash =
+      File.read!(@scptxt3_src)
+      |> (fn bytes -> :crypto.hash(:sha256, bytes) end).()
+      |> Base.encode64()
 
     fstream = File.stream!(@scptxt3_src, [], 1024)
 
     "localhost"
-    |> SSH.connect!
+    |> SSH.connect!()
     |> SSH.send!(fstream, @scptxt3_dst)
 
     Process.sleep(100)
 
-    dst_hash = File.read!(@scptxt3_dst)
-    |> fn bytes -> :crypto.hash(:sha256, bytes) end.()
-    |> Base.encode64
+    dst_hash =
+      File.read!(@scptxt3_dst)
+      |> (fn bytes -> :crypto.hash(:sha256, bytes) end).()
+      |> Base.encode64()
 
     assert src_hash == dst_hash
   end
-
 end

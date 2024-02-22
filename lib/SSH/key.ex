@@ -6,6 +6,7 @@ defmodule SSH.Key do
   """
 
   require Record
+
   Record.defrecord(:private_rsa, :RSAPrivateKey, [
     :version,
     :modulus,
@@ -16,7 +17,8 @@ defmodule SSH.Key do
     :exponent1,
     :exponent2,
     :coefficient,
-    :otherPrimeInfos])
+    :otherPrimeInfos
+  ])
 
   Record.defrecord(:private_ec, :ECPrivateKey, [
     :version,
@@ -31,8 +33,8 @@ defmodule SSH.Key do
   """
   @type mode :: :rsa
 
-  @spec gen(mode, userinfo :: String.t, keyword)
-    :: {pub :: String.t, priv :: String.t}
+  @spec gen(mode, userinfo :: String.t(), keyword) ::
+          {pub :: String.t(), priv :: String.t()}
   @doc """
   roughly equivalent to the shell command `ssh-keygen -t rsa`.  Appends
   `userinfo` in the comments field.
@@ -46,7 +48,7 @@ defmodule SSH.Key do
   - `:size` - sets the bit size.  for rsa, this can be 2048 or 4096
   """
   def gen(:rsa, userinfo, opts \\ []) do
-    #destructure important parts out of the private key for public key generation.
+    # destructure important parts out of the private key for public key generation.
     size = opts[:size] || 2048
 
     private_key =
@@ -61,7 +63,8 @@ defmodule SSH.Key do
   defp encode(key) do
     :public_key.pem_encode([:public_key.pem_entry_encode(elem(key, 0), key)])
   end
+
   defp encode(key, email) do
-    :public_key.ssh_encode([{key, comment: email}], :auth_keys)
+    :ssh_file.encode([{key, comment: email}], :auth_keys)
   end
 end
