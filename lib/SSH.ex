@@ -101,21 +101,21 @@ defmodule SSH do
   ## generally useful types
 
   @typedoc "erlang ip4 format, `{byte, byte, byte, byte}`"
-  @type ip4 :: :inet.ip4_address
+  @type ip4 :: :inet.ip4_address()
 
   @typedoc "connect to a remote is specified using either a domain name or an ip address"
-  @type remote :: String.t | charlist | ip4
+  @type remote :: String.t() | charlist | ip4
 
   @typedoc "connection reference for the SSH and SCP operations"
-  @type conn :: :ssh.connection_ref
+  @type conn :: :ssh.connection_ref()
 
   @typedoc "channel reference for the SSH and SCP operations"
-  @type chan :: :ssh.channel_id
+  @type chan :: :ssh.channel_id()
 
   #############################################################################
   ## connection and stream handling
 
-  @type connect_result :: {:ok, SSH.conn} | {:error, any}
+  @type connect_result :: {:ok, SSH.conn()} | {:error, any}
 
   @doc """
   initiates an ssh connection with a remote server.
@@ -173,18 +173,19 @@ defmodule SSH do
   """
   @impl true
   @spec connect(remote, keyword) :: connect_result
-  def connect(remote, options \\ [])do
+  def connect(remote, options \\ []) do
     # default to the charlist version.
     options1 = SSH.Config.assemble(remote, options)
     options2 = Keyword.drop(options1, [:port, :host_name, :identity])
 
     # attempt to resolve the identity issue here.  Maybe it will go into SSH.Config?
-    options3 = if identity = options1[:identity] do
-      # append our ClientIdentity handler.
-      [{:key_cb, {SSH.ClientIdentity, identity: Path.expand(identity)}} | options2]
-    else
-      options2
-    end
+    options3 =
+      if identity = options1[:identity] do
+        # append our ClientIdentity handler.
+        [{:key_cb, {SSH.ClientIdentity, identity: identity}} | options2]
+      else
+        options2
+      end
 
     options1[:host_name]
     |> :ssh.connect(options1[:port], options3)
@@ -197,24 +198,29 @@ defmodule SSH do
     if should_link?, do: Process.link(conn)
     {:ok, conn}
   end
+
   defp do_link(any, _), do: any
 
   @spec stash_label({:ok, conn} | {:error, any}, term) :: {:ok, conn} | {:error, any} | no_return
   defp stash_label(res, nil), do: res
+
   defp stash_label(_, pid) when is_pid(pid) do
     raise ArgumentError, "you can't make a pid label for an SSH connection."
   end
+
   defp stash_label(res = {:ok, conn}, label) do
-    new_labels = :"$ssh"
-    |> Process.get
-    |> case do
-      nil -> %{label => conn}
-      map -> Map.put(map, label, conn)
-    end
+    new_labels =
+      :"$ssh"
+      |> Process.get()
+      |> case do
+        nil -> %{label => conn}
+        map -> Map.put(map, label, conn)
+      end
 
     Process.put(:"$ssh", new_labels)
     res
   end
+
   defp stash_label(res, _), do: res
 
   @doc """
@@ -224,10 +230,12 @@ defmodule SSH do
   @spec connect!(remote, keyword) :: conn | no_return
   def connect!(remote, options \\ []) do
     case connect(remote, options) do
-      {:ok, conn} -> conn
+      {:ok, conn} ->
+        conn
+
       {:error, message} ->
         host = if is_tuple(remote), do: :inet.ntoa(remote), else: remote
-        raise SSH.ConnectionError, "error connecting to #{host}: #{error_fmt message}"
+        raise SSH.ConnectionError, "error connecting to #{host}: #{error_fmt(message)}"
     end
   end
 
@@ -259,7 +267,7 @@ defmodule SSH do
   - `module: {mod, init}`,  The stream is operated using an module with behaviour `SSH.ModuleApi`
   - `data_timeout: timeout`, how long to wait between packets till we send a timeout event.
   """
-  @spec stream(conn, String.t, keyword) :: {:ok, SSH.Stream.t} | {:error, String.t}
+  @spec stream(conn, String.t(), keyword) :: {:ok, SSH.Stream.t()} | {:error, String.t()}
   def stream(conn, cmd, options \\ []) do
     SSH.Stream.__build__(conn, [{:cmd, cmd} | options])
   end
@@ -267,12 +275,14 @@ defmodule SSH do
   @doc """
   like `stream/2`, except raises on an error instead of an error tuple.
   """
-  @spec stream!(conn, String.t, keyword) :: SSH.Stream.t | no_return
+  @spec stream!(conn, String.t(), keyword) :: SSH.Stream.t() | no_return
   def stream!(conn, cmd, options \\ []) do
     case stream(conn, cmd, options) do
-      {:ok, stream} -> stream
+      {:ok, stream} ->
+        stream
+
       {:error, error} ->
-        raise SSH.StreamError, message: "error creating ssh stream: #{error_fmt error}"
+        raise SSH.StreamError, message: "error creating ssh stream: #{error_fmt(error)}"
     end
   end
 
@@ -289,13 +299,15 @@ defmodule SSH do
   the close operation.  See [labels](#connect/2-labels)
   """
   @impl true
-  @spec close(conn | term) :: :ok | {:error, String.t}
+  @spec close(conn | term) :: :ok | {:error, String.t()}
   def close(conn) when is_pid(conn), do: :ssh.close(conn)
+
   def close(label) do
     case Process.get(:"$ssh") do
       map = %{^label => pid} ->
         Process.put(:"$ssh", Map.delete(map, label))
         :ssh.close(pid)
+
       _ ->
         {:error, "ssh connection with label #{label} not found"}
     end
@@ -307,7 +319,7 @@ defmodule SSH do
   @typedoc "unix-style return codes for ssh-executed functions"
   @type retval :: 0..255
 
-  @type run_content :: iodata | {String.t, String.t}
+  @type run_content :: iodata | {String.t(), String.t()}
 
   @type run_result :: {:ok, run_content, retval} | {:error, term}
 
@@ -362,7 +374,7 @@ defmodule SSH do
 
   """
   @impl true
-  @spec run(conn, String.t, keyword) :: run_result
+  @spec run(conn, String.t(), keyword) :: run_result
   def run(conn, cmd, options \\ []) do
     options! = Keyword.put(options, :stream_control_messages, true)
     {cmd!, options!} = adjust_run(cmd, options!)
@@ -381,38 +393,53 @@ defmodule SSH do
   AND in the case that the remote command returns non-zero.
   """
   @impl true
-  @spec run!(conn, String.t, keyword) :: run_content | no_return
+  @spec run!(conn, String.t(), keyword) :: run_content | no_return
   def run!(conn, cmd, options \\ []) do
     case run(conn, cmd, options ++ [as: :tuple]) do
       {:ok, {result, stderr}, 0} ->
         if options[:io_tuple], do: {result, stderr}, else: result
-      {:ok, result, 0} -> result
+
+      {:ok, result, 0} ->
+        result
+
       {:ok, {_, stderr}, retcode} ->
         raise SSH.RunError, "command #{cmd} errored with retcode #{retcode}: #{stderr}"
+
       {:ok, _result, retcode} ->
         raise SSH.RunError, "command #{cmd} errored with retcode #{retcode}"
+
       error ->
-        raise SSH.StreamError, "ssh errored with #{error_fmt error}"
+        raise SSH.StreamError, "ssh errored with #{error_fmt(error)}"
     end
   end
 
-  defp consume(str, {status, list, retval}) when is_binary(str), do: {status, [list | str], retval}
+  defp consume(str, {status, list, retval}) when is_binary(str),
+    do: {status, [list | str], retval}
+
   defp consume(token = {a, b}, {status, list, retval}) when is_atom(a) and is_binary(b) do
     {status, [token | list], retval}
   end
+
   defp consume(:eof, {_any, list, retval}), do: {:ok, list, retval}
   defp consume({:error, reason}, {_status, list, _any}), do: {:error, list, reason}
   defp consume({:retval, retval}, {status, list, _any}), do: {status, list, retval}
 
   defp normalize_output({a, list, b}, options) do
     case options[:as] do
-      nil -> {a, :erlang.iolist_to_binary(list), b}
-      :binary -> {a, :erlang.iolist_to_binary(list), b}
-      :iolist -> {a, list, b}
+      nil ->
+        {a, :erlang.iolist_to_binary(list), b}
+
+      :binary ->
+        {a, :erlang.iolist_to_binary(list), b}
+
+      :iolist ->
+        {a, list, b}
+
       :tuple ->
-        tuple_map = list
-        |> Enum.reverse
-        |> Enum.group_by(fn {key, _} -> key end, fn {_, value} -> value end)
+        tuple_map =
+          list
+          |> Enum.reverse()
+          |> Enum.group_by(fn {key, _} -> key end, fn {_, value} -> value end)
 
         result = {
           :erlang.iolist_to_binary(tuple_map[:stdout] || []),
@@ -422,6 +449,7 @@ defmodule SSH do
         {a, result, b}
     end
   end
+
   defp normalize_output(error, _options), do: error
 
   defp adjust_run(cmd, options) do
@@ -429,6 +457,7 @@ defmodule SSH do
     options! = options -- [as: :tuple]
 
     dir = options![:dir]
+
     if dir do
       {"cd #{dir}; " <> cmd, refactor(options!)}
     else
@@ -451,8 +480,9 @@ defmodule SSH do
 
   @type send_result :: :ok | {:error, term}
 
-  @type filestreams :: %Stream{enum: %File.Stream{}}
-    | %File.Stream{}
+  @type filestreams ::
+          %Stream{enum: %File.Stream{}}
+          | %File.Stream{}
 
   @doc """
   sends binary content to the remote host.
@@ -478,8 +508,9 @@ defmodule SSH do
   ```
   """
   @impl true
-  @spec send(conn, iodata | filestreams, Path.t, keyword) :: send_result
+  @spec send(conn, iodata | filestreams, Path.t(), keyword) :: send_result
   def send(conn, stream, remote_file, options \\ [])
+
   def send(conn, src_stream = %_{}, remote_file, options) do
     size = find_size_of(src_stream)
     perms = Keyword.get(options, :permissions, 0o644)
@@ -487,57 +518,70 @@ defmodule SSH do
     file_id = Path.basename(remote_file)
 
     case SSH.Stream.__build__(conn,
-        cmd: "scp -t #{remote_file}",
-        module: {SSH.SCP.Stream, {Path.basename(remote_file), size, perms}},
-        data_timeout: 500,
-        prerun_fn: &SSH.SCP.Stream.scp_init(&1, &2, "C0#{Integer.to_string(perms, 8)} #{size} #{file_id}\n"),
-        on_finish: &Function.identity/1,
-        on_stream_done: &SSH.SCP.Stream.on_stream_done/1) do
-
+           cmd: "scp -t #{remote_file}",
+           module: {SSH.SCP.Stream, {Path.basename(remote_file), size, perms}},
+           data_timeout: 500,
+           prerun_fn:
+             &SSH.SCP.Stream.scp_init(
+               &1,
+               &2,
+               "C0#{Integer.to_string(perms, 8)} #{size} #{file_id}\n"
+             ),
+           on_finish: &Function.identity/1,
+           on_stream_done: &SSH.SCP.Stream.on_stream_done/1
+         ) do
       {:ok, ssh_stream} ->
-
         src_stream
         |> Enum.into(ssh_stream)
-        |> Stream.run
+        |> Stream.run()
 
-      error -> error
+      error ->
+        error
     end
   end
+
   def send(conn, content, remote_file, options) do
     perms = Keyword.get(options, :permissions, 0o644)
     filename = Path.basename(remote_file)
     initializer = {filename, content, perms}
 
     case SSH.Stream.__build__(conn,
-        cmd: "scp -t #{remote_file}",
-        module: {Send, initializer},
-        data_timeout: 500) do
+           cmd: "scp -t #{remote_file}",
+           module: {Send, initializer},
+           data_timeout: 500
+         ) do
       {:ok, stream} ->
         Enum.reduce(stream, :ok, &Send.reducer/2)
-      error -> error
+
+      error ->
+        error
     end
   end
 
   defp find_size_of(%Stream{enum: fstream = %File.Stream{}}) do
     find_size_of(fstream)
   end
+
   defp find_size_of(fstream = %File.Stream{}) do
     case File.stat(fstream.path) do
       {:ok, stat} -> stat.size
       _ -> raise SSH.SCP.Error, "error getting file size for #{fstream.path}"
     end
   end
+
   @doc """
   like `send/4`, except raises on errors, instead of returning an error tuple.
   """
   @impl true
-  @spec send!(conn, iodata, Path.t) :: :ok | no_return
-  @spec send!(conn, iodata, Path.t, keyword) :: :ok | no_return
+  @spec send!(conn, iodata, Path.t()) :: :ok | no_return
+  @spec send!(conn, iodata, Path.t(), keyword) :: :ok | no_return
   def send!(conn, content, remote_file, options \\ []) do
     case send(conn, content, remote_file, options) do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, message} ->
-        raise SSH.SCP.Error, "error executing SCP send: #{error_fmt message}"
+        raise SSH.SCP.Error, "error executing SCP send: #{error_fmt(message)}"
     end
   end
 
@@ -567,12 +611,14 @@ defmodule SSH do
   ```
   """
   @impl true
-  @spec fetch(conn, Path.t, keyword) :: fetch_result
+  @spec fetch(conn, Path.t(), keyword) :: fetch_result
   def fetch(conn, remote_file, _options \\ []) do
-    with {:ok, stream} <- SSH.Stream.__build__(conn,
-                            cmd: "scp -f #{remote_file}",
-                            module: {Fetch, :ok},
-                            data_timeout: 500) do
+    with {:ok, stream} <-
+           SSH.Stream.__build__(conn,
+             cmd: "scp -f #{remote_file}",
+             module: {Fetch, :ok},
+             data_timeout: 500
+           ) do
       Enum.reduce(stream, :ok, &Fetch.reducer/2)
     end
   end
@@ -581,12 +627,14 @@ defmodule SSH do
   like `fetch/3` except raises instead of emitting an error tuple.
   """
   @impl true
-  @spec fetch!(conn, Path.t, keyword) :: binary | no_return
+  @spec fetch!(conn, Path.t(), keyword) :: binary | no_return
   def fetch!(conn, remote_file, options \\ []) do
     case fetch(conn, remote_file, options) do
-      {:ok, result} -> result
+      {:ok, result} ->
+        result
+
       {:error, message} ->
-        raise SSH.SCP.Error, "error executing SCP send: #{error_fmt message}"
+        raise SSH.SCP.Error, "error executing SCP send: #{error_fmt(message)}"
     end
   end
 
