@@ -161,7 +161,7 @@ defmodule SSH.Config do
 
   @allowed_options [
     :host_name, :user, :port, :silently_accept_hosts, :quiet_mode,
-    :connect_timeout, :identity, :user_interaction, :save_accepted_host
+    :connect_timeout, :identity, :user_interaction, :save_accepted_host, :key_cb
   ]
 
   @default_options user_interaction: false
