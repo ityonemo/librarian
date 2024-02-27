@@ -10,16 +10,18 @@ defmodule SSHTest.TTYTest do
 
       # check that it defaults to sending to stdout
 
-      assert "/dev/" <> _  = capture_io(fn ->
-        assert {:ok, _, 0} = SSH.run(conn, "tty", tty: true)
-      end)
+      assert "/dev/" <> _ =
+               capture_io(fn ->
+                 assert {:ok, _, 0} = SSH.run(conn, "tty", tty: true)
+               end)
 
       # and it's overrideable, in the normal fashion (say you want to send it to a LiveView)
 
       assert {:ok, "/dev" <> _, 0} = SSH.run(conn, "tty", tty: true, stdout: :stream)
 
       # and it's possible to directly send some tty options in.
-      assert {:ok, "/dev" <> _, 0} = SSH.run(conn, "tty", tty: [width: 80, height: 40], stdout: :stream)
+      assert {:ok, "/dev" <> _, 0} =
+               SSH.run(conn, "tty", tty: [width: 80, height: 40], stdout: :stream)
     end
   end
 end

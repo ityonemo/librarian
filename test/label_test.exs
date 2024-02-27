@@ -6,7 +6,7 @@ defmodule SSHTest.LabelTest do
     {:ok, "bar\n", 0} = SSH.run(conn, "echo bar")
     :ok = SSH.close("foo")
 
-    #wait a bit before closing.
+    # wait a bit before closing.
     Process.sleep(10)
 
     refute Process.alive?(conn)
@@ -33,5 +33,4 @@ defmodule SSHTest.LabelTest do
 
     refute_receive :unreachable
   end
-
 end

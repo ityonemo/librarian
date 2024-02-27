@@ -17,7 +17,7 @@ defmodule SSH.ModuleApi do
   accumulator as the second part of the tuple.  A return value of `{:error, any}`
   indicates an error in initialization, and the SSH channel will not be created.
   """
-  @callback init(SSH.Stream.t, term) :: {:ok, SSH.Stream.t} | {:error, any}
+  @callback init(SSH.Stream.t(), term) :: {:ok, SSH.Stream.t()} | {:error, any}
 
   @doc """
   responds to binary data coming over the standard out segment of the data
@@ -38,16 +38,16 @@ defmodule SSH.ModuleApi do
   `SSH.Stream.send_data/2` or `SSH.Stream.send_eof/1` functions within
   your implementations.
   """
-  @callback on_stdout(stream_data::binary, SSH.Stream.t) ::
-    {output::[term] | :halt, SSH.Stream.t}
+  @callback on_stdout(stream_data :: binary, SSH.Stream.t()) ::
+              {output :: [term] | :halt, SSH.Stream.t()}
 
   @doc """
   responds to binary data coming over the standard error segment of the data stream.
 
   See `c:stdout/2`, execpt with data coming over the standard error subchannel.
   """
-  @callback on_stderr(stream_data::binary, SSH.Stream.t) ::
-    {output::[term] | :halt, SSH.Stream.t}
+  @callback on_stderr(stream_data :: binary, SSH.Stream.t()) ::
+              {output :: [term] | :halt, SSH.Stream.t()}
 
   @doc """
   responds to when it takes too long for the other side to respond with data.
@@ -56,5 +56,5 @@ defmodule SSH.ModuleApi do
   not implement this function, the `SSH.Stream` module will pick an
   implementation that closes the connection.
   """
-  @callback on_timeout(SSH.Stream.t) :: {[], SSH.Stream.t}
+  @callback on_timeout(SSH.Stream.t()) :: {[], SSH.Stream.t()}
 end

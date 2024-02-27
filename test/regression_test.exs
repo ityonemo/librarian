@@ -21,9 +21,9 @@ defmodule LibrarianTest.RegressionTest do
     conn = SSH.connect!("localhost")
 
     refute capture_log(fn ->
-      SSH.send!(conn, "test_content", @testpath1)
-      SSH.run!(conn, "echo hello")
-    end) =~ "unexpected"
+             SSH.send!(conn, "test_content", @testpath1)
+             SSH.run!(conn, "echo hello")
+           end) =~ "unexpected"
 
     File.rm_rf!(@testpath1)
   end
@@ -37,5 +37,4 @@ defmodule LibrarianTest.RegressionTest do
     assert {"hello\n", ""} = SSH.run!(conn, "echo hello", io_tuple: true)
     assert {"", "hello\n"} = SSH.run!(conn, "echo hello 1>&2", io_tuple: true)
   end
-
 end

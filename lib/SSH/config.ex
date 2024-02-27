@@ -1,5 +1,4 @@
 defmodule SSH.Config do
-
   @default_global_config_path "/etc/ssh/ssh_config"
   @default_user_config_path "~/.ssh/config"
 
@@ -51,39 +50,47 @@ defmodule SSH.Config do
   - `:user_config_path` sets the user config path.  If set to false, will
     suppress checking local configs.
   """
-  @spec load(keyword) :: %{optional(String.t) => keyword}
+  @spec load(keyword) :: %{optional(String.t()) => keyword}
   def load(options \\ []) do
-    global_config_path = options[:global_config_path] ||
-      Application.get_env(
-        :librarian,
-        :global_config_path,
-        @default_global_config_path)
+    global_config_path =
+      options[:global_config_path] ||
+        Application.get_env(
+          :librarian,
+          :global_config_path,
+          @default_global_config_path
+        )
 
-    global_config = if global_config_path && File.exists?(global_config_path) do
-      unless match?("/" <> _, global_config_path) do
-        raise ArgumentError, "global config path must be absolute."
-      end
-      global_config_path
-      |> File.read!
-      |> parse
-    else
-      %{}
-    end
+    global_config =
+      if global_config_path && File.exists?(global_config_path) do
+        unless match?("/" <> _, global_config_path) do
+          raise ArgumentError, "global config path must be absolute."
+        end
 
-    user_config_path = options[:user_config_path] ||
-      Application.get_env(
-        :librarian,
-        :user_config_Path,
-        @default_user_config_path)
-
-    user_config = if user_config_path do
-      user_config_abs_path = Path.expand(user_config_path)
-      if File.exists?(user_config_abs_path) do
-        user_config_abs_path
-        |> File.read!
+        global_config_path
+        |> File.read!()
         |> parse
+      else
+        %{}
       end
-    end
+
+    user_config_path =
+      options[:user_config_path] ||
+        Application.get_env(
+          :librarian,
+          :user_config_Path,
+          @default_user_config_path
+        )
+
+    user_config =
+      if user_config_path do
+        user_config_abs_path = Path.expand(user_config_path)
+
+        if File.exists?(user_config_abs_path) do
+          user_config_abs_path
+          |> File.read!()
+          |> parse
+        end
+      end
 
     Map.merge(global_config, user_config || %{})
   end
@@ -91,7 +98,7 @@ defmodule SSH.Config do
   @doc """
   parses a configuration text, loaded as a string.
   """
-  @spec parse(String.t) :: %{optional(String.t) => keyword}
+  @spec parse(String.t()) :: %{optional(String.t()) => keyword}
   def parse(config_text) do
     config_text
     |> String.split("\n")
@@ -100,46 +107,59 @@ defmodule SSH.Config do
     |> complete
   end
 
-  @spec preprocess_line(String.t) :: String.t
+  @spec preprocess_line(String.t()) :: String.t()
   defp preprocess_line(val) do
     val
-    |> String.trim
-    |> String.split("#", parts: 2) # handle commented lines by splitting and
-    |> Enum.at(0)                  # ignoring anything past the octothorpe
+    |> String.trim()
+    # handle commented lines by splitting and
+    |> String.split("#", parts: 2)
+    # ignoring anything past the octothorpe
+    |> Enum.at(0)
   end
 
-  @typep parse_intermediate :: {[{String.t, keyword}], String.t | nil, keyword | nil}
+  @typep parse_intermediate :: {[{String.t(), keyword}], String.t() | nil, keyword | nil}
 
-  @spec parse_reducer(String.t, parse_intermediate) :: parse_intermediate
+  @spec parse_reducer(String.t(), parse_intermediate) :: parse_intermediate
   defp parse_reducer("Host " <> hostname, {kw_so_far, nil, nil}) do
     {kw_so_far, hostname, []}
   end
+
   defp parse_reducer("Host " <> hostname, {kw_so_far, this_name, this_kw}) do
     {kw_so_far ++ [{this_name, this_kw}], String.trim(hostname), []}
   end
+
   defp parse_reducer("", acc), do: acc
-  defp parse_reducer(_other, {_, nil, nil}), do: raise "error parsing ssh config file, must begin with a Host statement"
+
+  defp parse_reducer(_other, {_, nil, nil}),
+    do: raise("error parsing ssh config file, must begin with a Host statement")
+
   defp parse_reducer(other, acc = {kw_so_far, this_name, this_map}) do
     other
     |> String.split(~r/\s/, parts: 2)
     |> case do
       [string_key, value] ->
-        atom_key = string_key |> Macro.underscore |> String.to_atom
+        atom_key = string_key |> Macro.underscore() |> String.to_atom()
         {kw_so_far, this_name, this_map ++ [{atom_key, value}]}
-      [""] -> acc
-      [string] -> raise "error parsing ssh config: stray config #{string}"
+
+      [""] ->
+        acc
+
+      [string] ->
+        raise "error parsing ssh config: stray config #{string}"
     end
   end
 
-  @spec complete(parse_intermediate) :: %{optional(String.t) => keyword}
+  @spec complete(parse_intermediate) :: %{optional(String.t()) => keyword}
   defp complete({_, nil, nil}), do: %{}
+
   defp complete({kw_so_far, this_name, this_kw}) do
     kw_so_far
     |> Kernel.++([{this_name, this_kw}])
     |> Enum.map(fn
       {host, kw} ->
         keymap = kw |> Enum.map(&adjust/1)
-        {host, keymap} end)
+        {host, keymap}
+    end)
     |> Enum.into(%{})
   end
 
@@ -149,9 +169,11 @@ defmodule SSH.Config do
   defp adjust({key, v}) when key in @second_keys do
     {key, String.to_integer(v) * 1000}
   end
+
   defp adjust({key, v}) when key in @boolean_keys do
     {key, boolean(v)}
   end
+
   defp adjust(any), do: any
 
   defp boolean("yes"), do: true
@@ -160,8 +182,18 @@ defmodule SSH.Config do
   #################################################################
 
   @allowed_options [
-    :host_name, :user, :port, :silently_accept_hosts, :quiet_mode,
-    :connect_timeout, :identity, :user_interaction, :save_accepted_host
+    :host_name,
+    :user,
+    :port,
+    :silently_accept_hosts,
+    :quiet_mode,
+    :connect_timeout,
+    :identity,
+    :user_interaction,
+    :save_accepted_host,
+    :key_cb,
+    :user_dir,
+    :inet6
   ]
 
   @default_options user_interaction: false
@@ -172,24 +204,29 @@ defmodule SSH.Config do
   @spec assemble(charlist, keyword) :: keyword
   def assemble(remote, options) do
     case remote do
-      t when is_tuple(t) -> [host_name: :inet.ntoa(t)]
+      t when is_tuple(t) ->
+        [host_name: :inet.ntoa(t)]
+
       l when is_list(l) ->
         options
         |> load_if_enabled
         |> Map.get(List.to_string(l), [])
-        |> Kernel.++([host_name: l])
+        |> Kernel.++(host_name: l)
+
       s when is_binary(s) ->
         options
         |> load_if_enabled
         |> Map.get(s, [])
-        |> Kernel.++([host_name: s])
+        |> Kernel.++(host_name: s)
     end
     |> Keyword.merge(@default_options)
-    |> Keyword.merge(options)  # user options take precedence.
+    # user options take precedence.
+    |> Keyword.merge(options)
     |> Keyword.put_new_lazy(:user, &find_user/0)
     |> rename_to_erlang_ssh
     |> Keyword.put_new(:port, 22)
-    |> Keyword.take(@allowed_options) # whitelist usable options.
+    # whitelist usable options.
+    |> Keyword.take(@allowed_options)
   end
 
   defp load_if_enabled(options) do
@@ -211,12 +248,15 @@ defmodule SSH.Config do
     Enum.map(options, fn
       {:strict_host_key_checking, v} ->
         {:silently_accept_hosts, v}
+
       {:user, usr} when is_binary(usr) ->
         {:user, String.to_charlist(usr)}
+
       {:host_name, host} when is_binary(host) ->
         {:host_name, String.to_charlist(host)}
-      any -> any
+
+      any ->
+        any
     end)
   end
-
 end
