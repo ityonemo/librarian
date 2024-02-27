@@ -192,7 +192,8 @@ defmodule SSH.Config do
     :user_interaction,
     :save_accepted_host,
     :key_cb,
-    :user_dir
+    :user_dir,
+    :inet6
   ]
 
   @default_options user_interaction: false
